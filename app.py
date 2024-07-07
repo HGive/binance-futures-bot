@@ -10,8 +10,8 @@ from pprint import pprint
 
 url = 'https://api1.binance.com'
 
-api_key = os.environ['BINANCE_API_KEY_TEST']
-api_secret = os.environ['BINANCE_API_SECRET_TEST']
+api_key = os.environ['BINANCE_API_KEY']
+api_secret = os.environ['BINANCE_API_SECRET']
 client = Client(api_key, api_secret, testnet=True)
 
 # client = Client(api_key, api_secret, tld='us')
@@ -26,8 +26,8 @@ headers = {'content-type': 'application/json','X-MBX-APIKEY': api_key}
 
 response = requests.get(url + api_call, headers=headers)
 response = json.loads(response.text)
-# df = pd.DataFrame.from_records(response)
-# print(df)
+df = pd.DataFrame.from_records(response)
+print(df)
 
 # print(client.ping())  # {} empty response means no errors
 res= client.get_server_time()

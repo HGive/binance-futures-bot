@@ -10,8 +10,8 @@ from pprint import pprint
 
 url = 'https://api1.binance.com'
 
-api_key = os.environ['BINANCE_API_KEY_TEST']
-api_secret = os.environ['BINANCE_API_SECRET_TEST']
+api_key = os.environ['BINANCE_API_KEY']
+api_secret = os.environ['BINANCE_API_SECRET']
 client = Client(api_key, api_secret,testnet=False)
 
 # client = Client(api_key, api_secret, tld='us')
