@@ -2,5 +2,4 @@ python-binance
 python-dotenv
 pandas
 ccxt
-pprint
 requests
