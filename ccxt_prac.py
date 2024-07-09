@@ -51,7 +51,7 @@ exchange = ccxt.binance(config = {
 # pprint(usdt_balance)
 
 # 포지션 정보 
-# positions = exchange.fetch_positions(symbols=[symbol])
+# positions = exchange.fetch_positions(symbols=['TAO/USDT'])
 # pprint(positions)
 
 
