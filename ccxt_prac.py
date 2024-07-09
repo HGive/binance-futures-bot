@@ -36,7 +36,7 @@ exchange = ccxt.binance(config = {
 # pprint(ticker)
 
 # balance = exchange.fetch_balance(params={"type":"future"})
-# # print(balance)
+# print(balance)
 
 # assets_with_positions = [
 #     asset for asset in balance['info']['assets']
@@ -46,9 +46,13 @@ exchange = ccxt.binance(config = {
 # # 포지션 보유 자산 출력
 # pprint(assets_with_positions)
 
+# balance = exchange.fetch_balance()
+# usdt_balance = balance['USDT']
+# pprint(usdt_balance)
+
 # 포지션 정보 
-positions = exchange.fetch_positions(symbols=[symbol])
-pprint(positions)
+# positions = exchange.fetch_positions(symbols=[symbol])
+# pprint(positions)
 
 
 # orders = [None] * 3
@@ -95,3 +99,22 @@ pprint(positions)
 
 # resp = exchange.cancel_all_orders(symbol=symbol)
 # pprint(resp)    
+
+
+# usdt_symbols = [symbol for symbol in exchange.symbols if symbol.endswith('/USDT')]
+# pprint(usdt_symbols)
+# markets = exchange.load_markets()
+# usdt_symbols = [symbol for symbol in markets if symbol.endswith('/USDT')]
+
+# responses = []
+# for symbol in usdt_symbols:
+#     try:
+#         response = exchange.set_margin_mode(marginMode='isolated', symbol=symbol)
+#         responses.append(response)
+#     except Exception as e:
+#         print(f"Error changing margin mode for {symbol}: {e}")
+
+# # 결과 확인
+# pprint(responses)
+
+# pprint(exchange.set_margin_mode(marginMode='isolated', symbol='MYROUSDT'))
