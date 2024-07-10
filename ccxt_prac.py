@@ -118,3 +118,5 @@ exchange = ccxt.binance(config = {
 # pprint(responses)
 
 # pprint(exchange.set_margin_mode(marginMode='isolated', symbol='MYROUSDT'))
+
+print(float('inf'))
