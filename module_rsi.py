@@ -1,6 +1,7 @@
 import pandas as pd
-def rsi_calc(ohlc: pd.DataFrame, period: int = 14):
-    ohlc = ohlc[4].astype(float)
+
+def calculate_rsi(ohlc: pd.DataFrame, period: int = 14):
+    ohlc = ohlc['close'].astype(float)
     delta = ohlc.diff()
     gains, declines = delta.copy(), delta.copy()
     gains[gains < 0] = 0
