@@ -17,6 +17,50 @@ exchange = ccxt.binance(config = {
     }
 })
 
+exchange.load_markets()
+price_precision = exchange.markets[symbol]['precision']['price']
+# print(exchange.markets[symbol])
+# print(exchange.markets[symbol]['precision'])
+# print(price_precision)
+
+# markets = exchange.load_markets()
+# usdt_pairs = [symbol.replace('/','') for symbol in markets if symbol.endswith('/USDT')]
+# print(usdt_pairs)
+
+# 4. USDT 마켓 필터링
+# def set_leverage(symbol, leverage):
+#     try:
+#         # 바이낸스에서 레버리지 설정 엔드포인트 호출
+#         exchange.fapiPrivatePostLeverage({
+#             'symbol': symbol,
+#             'leverage': leverage
+#         })
+#         print(f"레버리지 {leverage}x가 {symbol}에 설정되었습니다.")
+#     except ccxt.BaseError as e:
+#         print(f"레버리지 설정 중 오류 발생: {str(e)}")
+
+# 전체 USDT 거래 쌍에 대해 레버리지 설정 (예: BTC/USDT, ETH/USDT 등)
+
+# leverage = 10
+
+# tickers = exchange.fetch_tickers()
+# symbols = [tickers[symbol]['info']['symbol'] for symbol in tickers]
+# for pair in symbols:
+#     set_leverage(pair, leverage)
+# set_leverage('SAGAUSDT', 15)
+
+# tickers = exchange.fetch_tickers()
+# symbols = [tickers[symbol]['info']['symbol'] for symbol in tickers]
+
+# # 결과 출력
+# print(symbols)
+
+
+#소숫점 자릿수 제한
+# exchange.load_markets()
+# print(exchange.markets['CHR/USDT']['precision'])
+# print(exchange.markets['CHR/USDT']['limits'])
+
 #usdt markets
 # markets = exchange.load_markets()
 # usdt_markets = {}
@@ -54,18 +98,6 @@ exchange = ccxt.binance(config = {
 # positions = exchange.fetch_positions(symbols=['TAO/USDT'])
 # pprint(positions)
 
-
-# orders = [None] * 3
-# price = 2410
-
-# # limit price
-# orders[0] = exchange.create_order(
-#     symbol="BTCDOM/USDT",
-#     type="LIMIT",
-#     side="buy",
-#     amount=0.001,
-#     price=price
-# )
 
 # # take profit
 # orders[1] = exchange.create_order(
@@ -119,4 +151,3 @@ exchange = ccxt.binance(config = {
 
 # pprint(exchange.set_margin_mode(marginMode='isolated', symbol='MYROUSDT'))
 
-print(float('inf'))
