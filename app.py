@@ -21,11 +21,12 @@ exchange = ccxt.binance(config = {
 })
 
 #타겟 심볼
-symbol = 'BTCDOM/USDT'
+symbol = 'BTCDOM/USDT:USDT'
 
 #가격 소숫점 자릿수 제한 설정
 exchange.load_markets()
 price_precision = exchange.markets[symbol]['precision']['price']
+min_cost = exchange.markets[symbol]['limits']['cost']['min']
 
 timeframe = '5m'
 buy_count = 0
@@ -33,6 +34,8 @@ buy_count = 0
 def main() :
 
     global buy_count
+    global price_precision
+    global min_cost
 
     while True:
         # try:
@@ -46,7 +49,7 @@ def main() :
 
             ohlcv = exchange.fetch_ohlcv(symbol, timeframe, limit=200)
             currClose = ohlcv[-1][4]
-            targetBuyPrice = currClose*0.997  
+            targetBuyPrice = round(currClose*0.997/price_precision)*price_precision
             takeProfitPrice1 = targetBuyPrice*1.03
             stopLossPrice = targetBuyPrice*0.98
             df = pd.DataFrame(ohlcv,columns=['timestamp', 'open', 'high', 'low', 'close', 'volume'])
@@ -79,18 +82,17 @@ def main() :
                  
             if buy_count == 0 and entryPrice == None : 
                  
-                 order_usdt = avbl*0.1 # 주문할 양 잔고의 10%
-                 amount = order_usdt / targetBuyPrice
+                 avbl_1pcnt = avbl*0.01 # 주문할 양 잔고의 1%
+                 amount = avbl_1pcnt / targetBuyPrice
 
-                 
                 #  exchange.cancel_all_orders(symbol=symbol)
                  
-                 exchange.create_order( symbol = symbol, type = "LIMIT", side = "buy", amount = amount, price = targetBuyPrice )
+                #  exchange.create_order( symbol = symbol, type = "LIMIT", side = "buy", amount = amount, price = targetBuyPrice )
 
-                 # take profit
-                 exchange.create_order( symbol = symbol, type = "TAKE_PROFIT", side = "sell", amount = amount,
-                                        price = targetBuyPrice*1.3, params = {'stopPrice': targetBuyPrice*1.2} )
-                 # stop loss 
+                #  # take profit
+                #  exchange.create_order( symbol = symbol, type = "TAKE_PROFIT", side = "sell", amount = amount,
+                #                         price = targetBuyPrice*1.3, params = {'stopPrice': targetBuyPrice*1.2} )
+                #  stop loss 
                 #  exchange.create_order( symbol = symbol, type = "STOP", side = "sell", amount = 0.001, price = None, params={'stopPrice': 19200} )
 
                  buy_count += 1
@@ -98,6 +100,8 @@ def main() :
                  
             open_orders = exchange.fetch_open_orders(symbol)
             pprint(len(open_orders))
+            print(targetBuyPrice)
+            print(amount)
             
 
 
