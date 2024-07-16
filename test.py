@@ -1,88 +1,109 @@
-import pandas as pd
 import os
-import requests
-import json
-import datetime
+import time
 from dotenv import load_dotenv
-load_dotenv()  # read file from local .env
-from binance.client import Client
+import ccxt
+import pandas as pd
 from pprint import pprint
+from module_rsi import calculate_rsi
+from module_ema import calculate_ema
 
-url = 'https://api1.binance.com'
-
+#바이낸스 객체 생성
+load_dotenv() 
 api_key = os.environ['BINANCE_API_KEY']
 api_secret = os.environ['BINANCE_API_SECRET']
-client = Client(api_key, api_secret,testnet=False)
+exchange = ccxt.binance(config = {
+    'apiKey' : api_key,
+    'secret' : api_secret,
+    'enableRateLimit' : True,
+    'options' : {
+        'defaultType' : 'future'
+    }
+})
 
-# client = Client(api_key, api_secret, tld='us')
+#타겟 심볼
+symbol = 'BTCDOM/USDT:USDT'
 
-# tickers = client.get_all_tickers()
-# df = pd.DataFrame(tickers)
-# df.head()
+#가격 소숫점 자릿수 제한 설정
+exchange.load_markets()
+price_precision = exchange.markets[symbol]['precision']['price']
+amount_precision = exchange.markets[symbol]['precision']['amount']
+min_cost = exchange.markets[symbol]['limits']['cost']['min']
 
-# url = 'https://api1.binance.com'
-# api_call = '/api/v3/ticker/price'
-# headers = {'content-type': 'application/json','X-MBX-APIKEY': api_key}
+timeframe = '5m'
+buy_count = 0
 
-# response = requests.get(url + api_call, headers=headers)
-# response = json.loads(response.text)
-# df = pd.DataFrame.from_records(response)
-# print(df)
+def main() :
 
-# print(client.ping())  # {} empty response means no errors
-# res= client.get_server_time()
-# print(res)
-# ts = res['serverTime'] / 1000
-# your_dt = datetime.datetime.fromtimestamp(ts)
-# your_dt.strftime("%Y-%m-%d %H:%M:%S")
-# print(your_dt)
-# help(client.get_all_tickers)
+    global buy_count
+    global price_precision
+    global amount_precision
+    global min_cost
 
-# coin_info = client.get_all_tickers()
-# df = pd.DataFrame(coin_info)
-# pprint(coin_info)
-# pprint(df.head())
+    while True:
+        # try:
+            #USDT Avbl balance
+            balance = exchange.fetch_balance()
+            avbl = balance['USDT']['free']
 
-# exchange_info = client.get_exchange_info()
-# print(exchange_info.keys())   #dict_keys(['timezone', 'serverTime', 'rateLimits', 'exchangeFilters', 'symbols'])
-# df = pd.DataFrame(exchange_info['symbols'])
-# print(df)
-# symbol_info = client.get_symbol_info('BTCUSDT')
-# pprint(symbol_info)
+            positions = exchange.fetch_positions(symbols=[symbol])
+            entryPrice = positions[0]['entryPrice'] if len(positions) > 0 else None 
+            positionAmt = positions[0]['contracts'] if len(positions) > 0 else None
 
-# market_depth = client.get_order_book(symbol='BTCUSDT')
-# bids = pd.DataFrame(market_depth['bids'])
-# bids.columns = ['price','bids']
-# asks = pd.DataFrame(market_depth['asks'])
-# asks.columns = ['price','asks']
-# # pprint(bids)
-# # pprint(asks)
-# df = pd.concat([bids,asks]).fillna('-')
-# print(df)
+            ohlcv = exchange.fetch_ohlcv(symbol, timeframe, limit=200)
+            currClose = ohlcv[-1][4]
+            df = pd.DataFrame(ohlcv,columns=['timestamp', 'open', 'high', 'low', 'close', 'volume'])
+            rsi = calculate_rsi(df,14)
+            ema_99 = calculate_ema(df['close'],window=99)
+            ema_150 = calculate_ema(df['close'],window=150)
+            highest_last_150 = df['high'].rolling(window=150).max().iloc[-1]
+            highest_last_35 = df['high'].rolling(window=35).max().iloc[-1]
+            print(df)
+            print('close : ', currClose)
+            print('entryPrice : ', entryPrice)
+            print('positionAmt : ', positionAmt)
+            print('avbl : ', avbl)
+            print('rsi : ', rsi.iloc[-1])
+            print('ema_99 : ', ema_99.iloc[-1])
+            print('ema_150 : ', ema_150.iloc[-1])
+            print(buy_count)
+            print('high 150 : ', highest_last_150)
+            print('high 35 : ', highest_last_35)
 
-# recent_trades = client.get_recent_trades(symbol='BTCUSDT')
-# df = pd.DataFrame(recent_trades)
-# # print(df)
-# # help(client.get_historical_trades)
-# id = df.loc[450,'id']
-# print('id:' ,id)
-# historical_trades = client.get_historical_trades(symbol='BTCUSDT', limit=1000, fromId=id)
-# df = pd.DataFrame(historical_trades)
-# print(df)
+            # #조건판별 후 buy
+            init_cond = buy_count == 0 and entryPrice == None and highest_last_150*0.95 >= currClose and highest_last_35*0.975 >= currClose and rsi < 35
+            
+            # if init_cond:
+            #      buy_count += 1
+            #      print('init buy, buy_count : ', buy_count) 
 
-# avg_price = client.get_avg_price(symbol="BTCUSDT")
-# print(avg_price)
+            # if buy_count == 1  and entryPrice != None :
+                 
+            if buy_count == 0 and entryPrice == None : 
+                targetBuyPrice = currClose - 2*price_precision
+                avbl_1pcnt = avbl*0.01 # 주문할 양 잔고의 1%
+                avbl_1pcnt_x10 = avbl_1pcnt*10
+                amount = avbl_1pcnt_x10 / targetBuyPrice
+                buy_count += 1
 
-# tickers = client.get_ticker()
-# df = pd.DataFrame(tickers)
-# print(df)
+                print('avbl_1pcnt', avbl_1pcnt)
+                print('targetBuyPrice', targetBuyPrice)
+                print('amount : ', amount)
+                print('amount_precision : ', amount_precision)
+                print('adjusted amount : ', round(amount/amount_precision)*amount_precision)
+                print('min_cost : ', min_cost)
 
-info = client.futures_account(symbol='NTRNUSDT')
-pprint(info)
+                 
+            open_orders = exchange.fetch_open_orders(symbol)
+            pprint(len(open_orders))
+            
+            # pprint(exchange.markets[symbol])
+            
 
-# asset_balance = client.futures_position_information(symbol='NTRNUSDT')
-# trades = client.futures_account_trades()
-# df = pd.DataFrame(trades)
-# df['time'] = pd.to_datetime(df['time'],unit='ms').dt.strftime('%Y-%m-%d %H:%M:%S')
-# df=df.rename(columns={'time':'시간'})
-# print(df)
+
+
+        # except Exception as e:
+        #     print(f"error occurered: {e}")
+            time.sleep(3)
+
+if __name__ == "__main__":
+    main()

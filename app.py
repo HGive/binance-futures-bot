@@ -26,6 +26,7 @@ symbol = 'BTCDOM/USDT:USDT'
 #가격 소숫점 자릿수 제한 설정
 exchange.load_markets()
 price_precision = exchange.markets[symbol]['precision']['price']
+amount_precision = exchange.markets[symbol]['precision']['amount']
 min_cost = exchange.markets[symbol]['limits']['cost']['min']
 
 timeframe = '5m'
@@ -35,6 +36,7 @@ def main() :
 
     global buy_count
     global price_precision
+    global amount_precision
     global min_cost
 
     while True:
@@ -49,9 +51,6 @@ def main() :
 
             ohlcv = exchange.fetch_ohlcv(symbol, timeframe, limit=200)
             currClose = ohlcv[-1][4]
-            targetBuyPrice = round(currClose*0.997/price_precision)*price_precision
-            takeProfitPrice1 = targetBuyPrice*1.03
-            stopLossPrice = targetBuyPrice*0.98
             df = pd.DataFrame(ohlcv,columns=['timestamp', 'open', 'high', 'low', 'close', 'volume'])
             rsi = calculate_rsi(df,14)
             ema_99 = calculate_ema(df['close'],window=99)
@@ -69,10 +68,9 @@ def main() :
             print(buy_count)
             print('high 150 : ', highest_last_150)
             print('high 35 : ', highest_last_35)
-            print('test % : ', 0.2449*0.9750)
 
             # #조건판별 후 buy
-            # init_cond = buy_count == 0 and entryPrice == None and highest_last_150*0.95 >= currClose and highest_last_35*0.975 >= currClose and rsi < 35
+            init_cond = buy_count == 0 and entryPrice == None and highest_last_150*0.95 >= currClose and highest_last_35*0.975 >= currClose and rsi < 35
             
             # if init_cond:
             #      buy_count += 1
@@ -81,27 +79,35 @@ def main() :
             # if buy_count == 1  and entryPrice != None :
                  
             if buy_count == 0 and entryPrice == None : 
-                 
-                 avbl_1pcnt = avbl*0.01 # 주문할 양 잔고의 1%
-                 amount = avbl_1pcnt / targetBuyPrice
+                targetBuyPrice = currClose - 2*price_precision
+                avbl_1pcnt = avbl*0.01 # 주문할 양 잔고의 1%
+                avbl_1pcnt_x10 = avbl_1pcnt*10
+                amount = avbl_1pcnt_x10 / targetBuyPrice
 
                 #  exchange.cancel_all_orders(symbol=symbol)
                  
-                #  exchange.create_order( symbol = symbol, type = "LIMIT", side = "buy", amount = amount, price = targetBuyPrice )
+                exchange.create_order( symbol = symbol, type = "LIMIT", side = "buy", amount = amount, price = targetBuyPrice )
 
                 #  # take profit
-                #  exchange.create_order( symbol = symbol, type = "TAKE_PROFIT", side = "sell", amount = amount,
-                #                         price = targetBuyPrice*1.3, params = {'stopPrice': targetBuyPrice*1.2} )
+                exchange.create_order( symbol = symbol, type = "TAKE_PROFIT", side = "sell", amount = amount,
+                                        price = targetBuyPrice*1.015, params = {'stopPrice': targetBuyPrice*1.01} )
                 #  stop loss 
                 #  exchange.create_order( symbol = symbol, type = "STOP", side = "sell", amount = 0.001, price = None, params={'stopPrice': 19200} )
 
-                 buy_count += 1
+                buy_count += 1
+
+                print('avbl_1pcnt', avbl_1pcnt)
+                print('targetBuyPrice', targetBuyPrice)
+                print('amount : ', amount)
+                print('amount_precision : ', amount_precision)
+                print('adjusted amount : ', round(amount/amount_precision)*amount_precision)
+                print('min_cost : ', min_cost)
 
                  
             open_orders = exchange.fetch_open_orders(symbol)
             pprint(len(open_orders))
-            print(targetBuyPrice)
-            print(amount)
+            
+            # pprint(exchange.markets[symbol])
             
 
 
