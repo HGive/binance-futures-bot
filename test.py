@@ -71,12 +71,6 @@ def main() :
 
             # #조건판별 후 buy
             init_cond = buy_count == 0 and entryPrice == None and highest_last_150*0.95 >= currClose and highest_last_35*0.975 >= currClose and rsi < 35
-            
-            # if init_cond:
-            #      buy_count += 1
-            #      print('init buy, buy_count : ', buy_count) 
-
-            # if buy_count == 1  and entryPrice != None :
                  
             if buy_count == 0 and entryPrice == None : 
                 targetBuyPrice = currClose - 2*price_precision
