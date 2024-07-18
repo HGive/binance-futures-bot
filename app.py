@@ -56,18 +56,15 @@ def main() :
             highest_last_150 = df['high'].rolling(window=150).max().iloc[-1]
             highest_last_35 = df['high'].rolling(window=35).max().iloc[-1]
 
-            # check_order_status()
+            check_order_status()
 
             # #조건판별 후 buy
             init_cond = buy_count == 0 and entryPrice == None and highest_last_150*0.95 >= currClose and highest_last_35*0.980 >= currClose and rsi < 35
                  
             # 최초 매수     
             if buy_count == 0 : 
-                targetBuyPrice = currClose - 2*price_precision
-                avbl_1pcnt = avbl*0.01 # 주문할 양 잔고의 1%
-                avbl_1pcnt_x10 = avbl_1pcnt*10
-                amount = avbl_1pcnt_x10 / targetBuyPrice
-                adjusted_amount = round(amount/amount_precision)*amount_precision
+                targetBuyPrice = currClose - 5*price_precision
+                adjusted_amount = calculate_amount(avbl, 0.01, 10, targetBuyPrice, amount_precision)
 
                 exchange.cancel_all_orders(symbol=symbol)
                  
@@ -76,19 +73,16 @@ def main() :
 
                 #  # take profit
                 exchange.create_order( symbol = symbol, type = "TAKE_PROFIT", side = "sell", amount = adjusted_amount,
-                                        price = targetBuyPrice*1.03, params = {'stopPrice': targetBuyPrice*1.02} )
+                                        price = targetBuyPrice*1.01, params = {'stopPrice': targetBuyPrice*1.002} )
                 #  stop loss 
                 #  exchange.create_order( symbol = symbol, type = "STOP", side = "sell", amount = 0.001, price = None, params={'stopPrice': 19200} )
 
                 buy_count += 1
 
-                print('avbl_1pcnt', avbl_1pcnt)
                 print('targetBuyPrice', targetBuyPrice)
-                print('amount : ', amount)
                 print('amount_precision : ', amount_precision)
-                print('adjusted amount : ', round(amount/amount_precision)*amount_precision)
+                print('adjusted amount : ', adjusted_amount)
                 print('min_cost : ', min_cost)
-                print('pending_order_ids : ', pending_order_ids)
                 
 
             # 첫 번째 물타기
@@ -98,9 +92,11 @@ def main() :
                 
                  
             open_orders = exchange.fetch_open_orders(symbol)
-            pprint(len(open_orders))
+            pprint(open_orders)
             
             # pprint(exchange.markets[symbol])
+            print('pending_order_ids : ', pending_order_ids)
+
             
 
 
@@ -109,6 +105,7 @@ def main() :
         #     print(f"error occurered: {e}")
             time.sleep(3)
 
+#buy_order만 체크
 def check_order_status():
     global buy_count, pending_order_ids
     
@@ -122,10 +119,22 @@ def check_order_status():
             elif order['status'] == 'canceled':
                 print(f"Order {order_id} has been canceled.")
                 pending_order_ids.remove(order_id)
+            else :
+                print(f"Order status : ", order['status'])
         except Exception as e:
             print(f"Error checking order {order_id}: {e}")
 
+def calculate_amount(avbl,percent, leverage, targetBuyPrice, amount_precision):
+    avbl_pcnt = avbl*percent # 주문할 양 잔고의 percent%
+    avbl_pcnt_xlev = avbl_pcnt*leverage
+    amount = avbl_pcnt_xlev / targetBuyPrice
+    return round(amount/amount_precision)*amount_precision
+    
         
+# avbl_1pcnt = avbl*0.01 # 주문할 양 잔고의 1%
+#                 avbl_1pcnt_x10 = avbl_1pcnt*10
+#                 amount = avbl_1pcnt_x10 / targetBuyPrice
+#                 adjusted_amount = round(amount/amount_precision)*amount_precision
 
 if __name__ == "__main__":
     main()
