@@ -28,14 +28,15 @@ exchange.load_markets()
 price_precision = exchange.markets[symbol]['precision']['price']
 amount_precision = exchange.markets[symbol]['precision']['amount']
 min_cost = exchange.markets[symbol]['limits']['cost']['min']
-pending_order_ids = []
+pending_buy_order_ids = []
+pending_tp_order_ids = []
 
 timeframe = '5m'
 buy_count = 0
 
 def main() :
 
-    global buy_count, price_precision, amount_precision, min_cost, pending_order_ids
+    global buy_count, price_precision, amount_precision, min_cost, pending_buy_order_ids, pending_tp_order_ids
 
     while True:
         # try:
@@ -54,48 +55,74 @@ def main() :
             ema_99 = calculate_ema(df['close'],window=99)
             ema_150 = calculate_ema(df['close'],window=150)
             highest_last_150 = df['high'].rolling(window=150).max().iloc[-1]
-            highest_last_35 = df['high'].rolling(window=35).max().iloc[-1]
+            highest_last_40 = df['high'].rolling(window=40).max().iloc[-1]
 
-            check_order_status()
+            #청산당했을 시 처음부터 다시 시작
+            # if buy_count != 0 and entryPrice == None :
+            #     buy_count = 0
+            #     exchange.cancel_all_orders()
+
+            #take profit 체결되면 다시 시작
+            if buy_count != 0 and len(pending_tp_order_ids) == 0:
+                buy_count = 0
+                exchange.cancel_all_orders()
+                continue
+
+            #buy_order 체결되었는지 체크
+            for order_id in pending_buy_order_ids[:]:  # 리스트를 복사하여 반복
+                try:
+                    order = exchange.fetch_order(order_id, symbol)
+                    #첫 매수 체결 후
+                    if order['status'] == 'closed' and buy_count == 0:
+                        print(f"Order {order_id} has been filled.")
+                        #이후 체결 로그 남기기
+                        buy_count += 1
+                        pending_buy_order_ids.remove(order_id)
+                        new_order = exchange.create_order( symbol = symbol, type = "LIMIT", side = "buy",
+                                                       amount = calculate_amount(avbl, 0.1, 10, targetBuyPrice, amount_precision),
+                                                        price = round(entryPrice*0.96/price_precision)*price_precision )
+                        pending_buy_order_ids.append(new_order['id'])
+                    elif order['status'] == 'canceled':
+                        print(f"Order {order_id} has been canceled.")
+                        pending_buy_order_ids.remove(order_id)
+                except Exception as e:
+                    print(f"Error checking order {order_id}: {e}")
 
             # #조건판별 후 buy
-            init_cond = buy_count == 0 and entryPrice == None and highest_last_150*0.95 >= currClose and highest_last_35*0.980 >= currClose and rsi < 35
+            init_cond = ( buy_count == 0 and entryPrice == None and highest_last_150*0.97 >= currClose and len(pending_tp_order_ids) == 0 and
+                         highest_last_40*0.985 >= currClose and rsi < 35 and currClose < ema_99 and len(pending_buy_order_ids) == 0 ) 
+            second_cond = ( buy_count == 1 and entryPrice != None and currClose <= entryPrice*0.96 )
+            third_cond = ()
                  
             # 최초 매수     
-            if buy_count == 0 : 
-                targetBuyPrice = currClose - 5*price_precision
-                adjusted_amount = calculate_amount(avbl, 0.01, 10, targetBuyPrice, amount_precision)
+            if init_cond : 
+                targetBuyPrice = currClose - 1*price_precision
+                adjusted_amount = calculate_amount(avbl, percent = 0.02, leverage= 10, targetBuyPrice = targetBuyPrice, amount_precision = amount_precision)
 
                 exchange.cancel_all_orders(symbol=symbol)
                  
                 order = exchange.create_order( symbol = symbol, type = "LIMIT", side = "buy", amount = adjusted_amount, price = targetBuyPrice )
-                pending_order_ids.append(order['id'])
+                pending_buy_order_ids.append(order['id'])
 
                 #  # take profit
-                exchange.create_order( symbol = symbol, type = "TAKE_PROFIT", side = "sell", amount = adjusted_amount,
-                                        price = targetBuyPrice*1.01, params = {'stopPrice': targetBuyPrice*1.002} )
+                tp_order = exchange.create_order( symbol = symbol, type = "TAKE_PROFIT", side = "sell", amount = adjusted_amount,
+                                        price = targetBuyPrice*1.03, params = {'stopPrice': targetBuyPrice*1.02} )
+                pending_tp_order_ids.append(tp_order['id'])
                 #  stop loss 
                 #  exchange.create_order( symbol = symbol, type = "STOP", side = "sell", amount = 0.001, price = None, params={'stopPrice': 19200} )
-
-                buy_count += 1
-
-                print('targetBuyPrice', targetBuyPrice)
-                print('amount_precision : ', amount_precision)
-                print('adjusted amount : ', adjusted_amount)
-                print('min_cost : ', min_cost)
                 
 
             # 첫 번째 물타기
-            if buy_count == 1 and entryPrice != None and currClose <= entryPrice*0.95 and rsi < 35:
+            if second_cond :
                 exchange.cancel_all_orders(symbol=symbol)
                 exchange.create_order( symbol = symbol, type = "LIMIT", side = "buy", amount = adjusted_amount, price = targetBuyPrice )
                 
                  
-            open_orders = exchange.fetch_open_orders(symbol)
-            pprint(open_orders)
+            # open_orders = exchange.fetch_open_orders(symbol)
+            # pprint(open_orders)
             
-            # pprint(exchange.markets[symbol])
-            print('pending_order_ids : ', pending_order_ids)
+            # # pprint(exchange.markets[symbol])
+            # print('pending_order_ids : ', pending_buy_order_ids)
 
             
 
@@ -104,25 +131,6 @@ def main() :
         # except Exception as e:
         #     print(f"error occurered: {e}")
             time.sleep(3)
-
-#buy_order만 체크
-def check_order_status():
-    global buy_count, pending_order_ids
-    
-    for order_id in pending_order_ids[:]:  # 리스트를 복사하여 반복
-        try:
-            order = exchange.fetch_order(order_id, symbol)
-            if order['status'] == 'closed':
-                print(f"Order {order_id} has been filled.")
-                buy_count += 1
-                pending_order_ids.remove(order_id)
-            elif order['status'] == 'canceled':
-                print(f"Order {order_id} has been canceled.")
-                pending_order_ids.remove(order_id)
-            else :
-                print(f"Order status : ", order['status'])
-        except Exception as e:
-            print(f"Error checking order {order_id}: {e}")
 
 def calculate_amount(avbl,percent, leverage, targetBuyPrice, amount_precision):
     avbl_pcnt = avbl*percent # 주문할 양 잔고의 percent%
