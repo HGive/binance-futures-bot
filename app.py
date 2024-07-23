@@ -30,13 +30,16 @@ amount_precision = exchange.markets[symbol]['precision']['amount']
 min_cost = exchange.markets[symbol]['limits']['cost']['min']
 pending_buy_order_ids = []
 pending_tp_order_ids = []
-
-timeframe = '5m'
+init_delay_count = 0
 buy_count = 0
+timeframe = '5m'
+
+#코드 시작하면 먼저 주문 모두 취소
+exchange.cancel_all_orders(symbol=symbol)
 
 def main() :
 
-    global buy_count, price_precision, amount_precision, min_cost, pending_buy_order_ids, pending_tp_order_ids
+    global buy_count, price_precision, amount_precision, min_cost, pending_buy_order_ids, pending_tp_order_ids, init_delay_count
 
     while True:
         # try:
@@ -57,16 +60,32 @@ def main() :
             highest_last_150 = df['high'].rolling(window=150).max().iloc[-1]
             highest_last_40 = df['high'].rolling(window=40).max().iloc[-1]
 
-            #청산당했을 시 처음부터 다시 시작
+            #청산당했을 시 처음부터 다시 시작  -  청산 안당하도록 로직 짤 것임 
             # if buy_count != 0 and entryPrice == None :
             #     buy_count = 0
             #     exchange.cancel_all_orders()
 
-            #take profit 체결되면 다시 시작
-            if buy_count != 0 and len(pending_tp_order_ids) == 0:
-                buy_count = 0
-                exchange.cancel_all_orders()
-                continue
+            #init buy 후 반복돌때마다 init_delay_count 1증가
+            if buy_count == 0 and len(pending_buy_order_ids) != 0:
+                init_delay_count += 1
+
+            if init_delay_count > 5 :
+                exchange.cancel_all_orders(symbol=symbol)
+                clear_pending_list()
+                init_delay_count = 0
+
+            #take profit 체결체크
+            for order_id in pending_tp_order_ids[:]:  # 리스트를 복사하여 반복
+                try:
+                    order = exchange.fetch_order(order_id, symbol)
+                    if buy_count != 0 and order['status'] == 'closed':
+                        buy_count = 0
+                        exchange.cancel_all_orders(symbol=symbol)
+                        clear_pending_list()
+                        continue
+                except Exception as e:
+                    print(f"Error checking order {order_id}: {e}")
+
 
             #buy_order 체결되었는지 체크
             for order_id in pending_buy_order_ids[:]:  # 리스트를 복사하여 반복
@@ -77,20 +96,18 @@ def main() :
                         print(f"Order {order_id} has been filled.")
                         #이후 체결 로그 남기기
                         buy_count += 1
-                        pending_buy_order_ids.remove(order_id)
+                        clear_pending_list()
                         new_order = exchange.create_order( symbol = symbol, type = "LIMIT", side = "buy",
                                                        amount = calculate_amount(avbl, 0.1, 10, targetBuyPrice, amount_precision),
                                                         price = round(entryPrice*0.96/price_precision)*price_precision )
                         pending_buy_order_ids.append(new_order['id'])
-                    elif order['status'] == 'canceled':
-                        print(f"Order {order_id} has been canceled.")
-                        pending_buy_order_ids.remove(order_id)
+                    
                 except Exception as e:
                     print(f"Error checking order {order_id}: {e}")
 
             # #조건판별 후 buy
-            init_cond = ( buy_count == 0 and entryPrice == None and highest_last_150*0.97 >= currClose and len(pending_tp_order_ids) == 0 and
-                         highest_last_40*0.985 >= currClose and rsi < 35 and currClose < ema_99 and len(pending_buy_order_ids) == 0 ) 
+            init_cond = ( buy_count == 0 and entryPrice == None and len(pending_tp_order_ids) == 0 and
+                         highest_last_40*0.98 >= currClose and rsi < 33 and len(pending_buy_order_ids) == 0 ) 
             second_cond = ( buy_count == 1 and entryPrice != None and currClose <= entryPrice*0.96 )
             third_cond = ()
                  
@@ -124,7 +141,10 @@ def main() :
             # # pprint(exchange.markets[symbol])
             # print('pending_order_ids : ', pending_buy_order_ids)
 
-            
+            print(currClose)
+            print(entryPrice)
+            print(positions)
+            print(rsi)
 
 
 
@@ -138,6 +158,9 @@ def calculate_amount(avbl,percent, leverage, targetBuyPrice, amount_precision):
     amount = avbl_pcnt_xlev / targetBuyPrice
     return round(amount/amount_precision)*amount_precision
     
+def clear_pending_list():
+    pending_buy_order_ids.clear()
+    pending_tp_order_ids.clear()
         
 # avbl_1pcnt = avbl*0.01 # 주문할 양 잔고의 1%
 #                 avbl_1pcnt_x10 = avbl_1pcnt*10

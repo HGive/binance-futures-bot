@@ -11,7 +11,10 @@ def calculate_rsi(ohlc: pd.DataFrame, period: int = 14):
     _loss = declines.abs().ewm(com=(period-1), min_periods=period).mean()
 
     RS = _gain / _loss
-    return pd.Series(100-(100/(1+RS)), name="RSI")
+    rsi = 100 - (100 / (1 + RS))
+
+    # return pd.Series(100-(100/(1+RS)), name="RSI")
+    return rsi.iloc[-1]  # 마지막 값(현재 RSI)만 반환
 
 
 # def calculate_rsi(data, period=14):
