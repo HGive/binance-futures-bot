@@ -48,16 +48,16 @@ def main() :
             avbl = balance['USDT']['free']
 
             positions = exchange.fetch_positions(symbols=[symbol])
-            entryPrice = positions[0]['entryPrice'] if len(positions) > 0 else None 
-            positionAmt = positions[0]['contracts'] if len(positions) > 0 else None
+            entryPrice = positions[0]['entryPrice'] if len(positions) > 0 else None
+            positionAmt = positions[0]['contracts'] if len(positions) > 0 else None 
 
             ohlcv = exchange.fetch_ohlcv(symbol, timeframe, limit=200)
             currClose = ohlcv[-1][4]
             df = pd.DataFrame(ohlcv,columns=['timestamp', 'open', 'high', 'low', 'close', 'volume'])
             rsi = calculate_rsi(df,14)
-            ema_99 = calculate_ema(df['close'],window=99)
-            ema_150 = calculate_ema(df['close'],window=150)
-            highest_last_150 = df['high'].rolling(window=150).max().iloc[-1]
+            # ema_99 = calculate_ema(df['close'],window=99)
+            # ema_150 = calculate_ema(df['close'],window=150)
+            # highest_last_150 = df['high'].rolling(window=150).max().iloc[-1]
             highest_last_40 = df['high'].rolling(window=40).max().iloc[-1]
 
             #청산당했을 시 처음부터 다시 시작  -  청산 안당하도록 로직 짤 것임 
@@ -65,14 +65,11 @@ def main() :
             #     buy_count = 0
             #     exchange.cancel_all_orders()
 
-            #init buy 후 반복돌때마다 init_delay_count 1증가
-            if buy_count == 0 and len(pending_buy_order_ids) != 0:
-                init_delay_count += 1
-
             if init_delay_count > 5 :
                 exchange.cancel_all_orders(symbol=symbol)
                 clear_pending_list()
                 init_delay_count = 0
+                continue
 
             #take profit 체결체크
             for order_id in pending_tp_order_ids[:]:  # 리스트를 복사하여 반복
@@ -82,25 +79,72 @@ def main() :
                         buy_count = 0
                         exchange.cancel_all_orders(symbol=symbol)
                         clear_pending_list()
-                        continue
                 except Exception as e:
                     print(f"Error checking order {order_id}: {e}")
-
 
             #buy_order 체결되었는지 체크
             for order_id in pending_buy_order_ids[:]:  # 리스트를 복사하여 반복
                 try:
                     order = exchange.fetch_order(order_id, symbol)
-                    #첫 매수 체결 후
-                    if order['status'] == 'closed' and buy_count == 0:
-                        print(f"Order {order_id} has been filled.")
+                    
+                    if buy_count == 0 and order['status'] == 'open' :
+                        init_delay_count += 1
+                    
+                    #첫 매수 체결
+                    if buy_count == 0 and order['status'] == 'closed' :
                         #이후 체결 로그 남기기
                         buy_count += 1
-                        clear_pending_list()
+                        targetBuyPrice = round(entryPrice*0.97/price_precision)*price_precision
                         new_order = exchange.create_order( symbol = symbol, type = "LIMIT", side = "buy",
-                                                       amount = calculate_amount(avbl, 0.1, 10, targetBuyPrice, amount_precision),
-                                                        price = round(entryPrice*0.96/price_precision)*price_precision )
+                                                       amount = calculate_amount(avbl, 0.09, 10, targetBuyPrice, amount_precision),
+                                                        price = targetBuyPrice )
+                        pending_buy_order_ids.clear()
                         pending_buy_order_ids.append(new_order['id'])
+
+                    #두번째 매수 체결
+                    if buy_count == 1 and order['status'] == 'closed':
+                        buy_count += 1
+                        targetBuyPrice = round(entryPrice*0.96/price_precision)*price_precision
+                        new_order = exchange.create_order( symbol = symbol, type = "LIMIT", side = "buy",
+                                                       amount = calculate_amount(avbl, 0.3, 10, targetBuyPrice, amount_precision),
+                                                        price = targetBuyPrice )
+                        
+                        new_tp_order = exchange.create_order( symbol = symbol, type = "TAKE_PROFIT", side = "sell", amount = positionAmt,
+                                        price = entryPrice*1.02, params = {'stopPrice': entryPrice*1.01} )
+
+                        clear_pending_list()
+                        pending_buy_order_ids.append(new_order['id'])
+                        pending_tp_order_ids.append(new_tp_order['id'])
+
+                    #세번째 매수 체결
+                    if buy_count == 2 and order['status'] == 'closed':
+                        buy_count += 1
+                        targetBuyPrice = round(entryPrice*0.96/price_precision)*price_precision
+                        new_order = exchange.create_order( symbol = symbol, type = "LIMIT", side = "buy",
+                                                       amount = calculate_amount(avbl, 1 , 10, targetBuyPrice, amount_precision),
+                                                        price = targetBuyPrice )
+                        
+                        
+                        new_tp_order = exchange.create_order( symbol = symbol, type = "TAKE_PROFIT", side = "sell", amount = positionAmt,
+                                        price = entryPrice*1.01, params = {'stopPrice': entryPrice*1.005} )
+
+                        clear_pending_list()
+                        pending_buy_order_ids.append(new_order['id'])
+                        pending_tp_order_ids.append(new_tp_order['id'])
+                        
+                    #네번째 매수 체결
+                    if buy_count == 3 and order['status'] == 'closed':
+                        targetBuyPrice = round(entryPrice*0.96/price_precision)*price_precision
+                        
+                        new_tp_order = exchange.create_order( symbol = symbol, type = "TAKE_PROFIT", side = "sell", amount = positionAmt,
+                                        price = entryPrice*1.005, params = {'stopPrice': entryPrice*1.003} )
+                        
+                        sl_order = 
+
+                        clear_pending_list()
+                        pending_buy_order_ids.append(new_order['id'])
+                        pending_tp_order_ids.append(new_tp_order['id'])
+
                     
                 except Exception as e:
                     print(f"Error checking order {order_id}: {e}")
@@ -145,6 +189,8 @@ def main() :
             print(entryPrice)
             print(positions)
             print(rsi)
+            print(pending_buy_order_ids)
+            print(pending_tp_order_ids)
 
 
 
