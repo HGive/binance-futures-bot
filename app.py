@@ -104,44 +104,54 @@ def main() :
                     #두번째 매수 체결
                     if buy_count == 1 and order['status'] == 'closed':
                         buy_count += 1
+                        clear_pending_list()
+                        exchange.cancel_all_orders(symbol=symbol)
+
                         targetBuyPrice = round(entryPrice*0.96/price_precision)*price_precision
+                        
                         new_order = exchange.create_order( symbol = symbol, type = "LIMIT", side = "buy",
                                                        amount = calculate_amount(avbl, 0.3, 10, targetBuyPrice, amount_precision),
                                                         price = targetBuyPrice )
                         
                         new_tp_order = exchange.create_order( symbol = symbol, type = "TAKE_PROFIT", side = "sell", amount = positionAmt,
-                                        price = entryPrice*1.02, params = {'stopPrice': entryPrice*1.01} )
+                                        price = round(entryPrice*1.02/price_precision)*price_precision ,
+                                        params = {'stopPrice': round(entryPrice*1.01/price_precision)*price_precision } )
 
-                        clear_pending_list()
                         pending_buy_order_ids.append(new_order['id'])
                         pending_tp_order_ids.append(new_tp_order['id'])
 
                     #세번째 매수 체결
                     if buy_count == 2 and order['status'] == 'closed':
                         buy_count += 1
-                        targetBuyPrice = round(entryPrice*0.96/price_precision)*price_precision
+                        clear_pending_list()
+                        exchange.cancel_all_orders(symbol=symbol)
+
+                        targetBuyPrice = round(entryPrice*0.95/price_precision)*price_precision
                         new_order = exchange.create_order( symbol = symbol, type = "LIMIT", side = "buy",
                                                        amount = calculate_amount(avbl, 1 , 10, targetBuyPrice, amount_precision),
                                                         price = targetBuyPrice )
                         
                         
                         new_tp_order = exchange.create_order( symbol = symbol, type = "TAKE_PROFIT", side = "sell", amount = positionAmt,
-                                        price = entryPrice*1.01, params = {'stopPrice': entryPrice*1.005} )
+                                        price = round(entryPrice*1.015/price_precision)*price_precision ,
+                                        params = {'stopPrice': round(entryPrice*1.01/price_precision)*price_precision} )
 
-                        clear_pending_list()
                         pending_buy_order_ids.append(new_order['id'])
                         pending_tp_order_ids.append(new_tp_order['id'])
                         
-                    #네번째 매수 체결
+                    #네번째 매수 체결 
                     if buy_count == 3 and order['status'] == 'closed':
-                        targetBuyPrice = round(entryPrice*0.96/price_precision)*price_precision
-                        
-                        new_tp_order = exchange.create_order( symbol = symbol, type = "TAKE_PROFIT", side = "sell", amount = positionAmt,
-                                        price = entryPrice*1.005, params = {'stopPrice': entryPrice*1.003} )
-                        
-                        sl_order = 
-
+                        exchange.cancel_all_orders(symbol=symbol)
                         clear_pending_list()
+
+                        new_tp_order = exchange.create_order( symbol = symbol, type = "TAKE_PROFIT", side = "sell", amount = positionAmt,
+                                        price = round(entryPrice*1.005/price_precision)*price_precision ,
+                                        params = {'stopPrice': round(entryPrice*1.003/price_precision)*price_precision} )
+                        
+                        sl_order = exchange.create_order( symbol = symbol, type = "STOP", side = "sell", amount = positionAmt,
+                                        price = round(entryPrice*0.97/price_precision)*price_precision ,
+                                        params = {'stopPrice': round(entryPrice*1.003/price_precision)*price_precision} ) 
+
                         pending_buy_order_ids.append(new_order['id'])
                         pending_tp_order_ids.append(new_tp_order['id'])
 
@@ -152,8 +162,6 @@ def main() :
             # #조건판별 후 buy
             init_cond = ( buy_count == 0 and entryPrice == None and len(pending_tp_order_ids) == 0 and
                          highest_last_40*0.98 >= currClose and rsi < 33 and len(pending_buy_order_ids) == 0 ) 
-            second_cond = ( buy_count == 1 and entryPrice != None and currClose <= entryPrice*0.96 )
-            third_cond = ()
                  
             # 최초 매수     
             if init_cond : 
@@ -171,13 +179,7 @@ def main() :
                 pending_tp_order_ids.append(tp_order['id'])
                 #  stop loss 
                 #  exchange.create_order( symbol = symbol, type = "STOP", side = "sell", amount = 0.001, price = None, params={'stopPrice': 19200} )
-                
-
-            # 첫 번째 물타기
-            if second_cond :
-                exchange.cancel_all_orders(symbol=symbol)
-                exchange.create_order( symbol = symbol, type = "LIMIT", side = "buy", amount = adjusted_amount, price = targetBuyPrice )
-                
+        
                  
             # open_orders = exchange.fetch_open_orders(symbol)
             # pprint(open_orders)
