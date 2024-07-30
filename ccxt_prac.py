@@ -17,21 +17,26 @@ exchange = ccxt.binance(config = {
     }
 })
 
-exchange.load_markets()
+markets = exchange.load_markets()
+tickers = exchange.fetch_tickers()
+symbols = tickers.keys()
+usdt_symbols = [x for x in symbols if x.endswith('USDT')]
+print(usdt_symbols)
+print(len(usdt_symbols))
 # price_precision = exchange.markets[symbol]['precision']['price']
 # pprint(exchange.markets['ZRX/USDT']['precision']['price'])
 # print(exchange.markets[symbol]['precision'])
 # print(price_precision)
-tao_symbols = [sym for sym in exchange.markets.keys() if sym.startswith('TAO')]
+# tao_symbols = [sym for sym in exchange.markets.keys() if sym.startswith('TAO')]
 
-for symbol in tao_symbols:
-    market = exchange.markets[symbol]
-    print(f"\nSymbol: {symbol}")
-    print(f"Type: {market['type']}")
-    print(f"Base/Quote: {market['base']}/{market['quote']}")
-    print(f"Active: {market['active']}")
-    print(f"Precision: {market['precision']}")
-    print(f"Limits: {market['limits']}")
+# for symbol in tao_symbols:
+#     market = exchange.markets[symbol]
+#     print(f"\nSymbol: {symbol}")
+#     print(f"Type: {market['type']}")
+#     print(f"Base/Quote: {market['base']}/{market['quote']}")
+#     print(f"Active: {market['active']}")
+#     print(f"Precision: {market['precision']}")
+#     print(f"Limits: {market['limits']}")
 
 # markets = exchange.load_markets()
 # usdt_pairs = [symbol.replace('/','') for symbol in markets if symbol.endswith('/USDT')]
