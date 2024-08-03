@@ -18,6 +18,7 @@ exchange = ccxt.binance(config = {
 })
 
 exchange.set_leverage(15, symbol)
+exchange.set_margin_mode('cross', symbol)
 
 # markets = exchange.load_markets()
 # tickers = exchange.fetch_tickers()

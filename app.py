@@ -30,7 +30,7 @@ amount_precision = exchange.markets[symbol]['precision']['amount']
 # min_cost = exchange.markets[symbol]['limits']['cost']['min']
 pending_buy_order_id = None
 pending_tp_order_id = None
-interval = 10   #10초마다 반복
+interval = 15   #10초마다 반복
 leverage = 10
 init_delay_count = 0
 buy_count = 0
@@ -192,12 +192,8 @@ def main() :
             print("--------------------------")
             print("buy_count : ", buy_count)
             print("init_delay_count : ", init_delay_count)
-            print("currClose : ", currClose)
-            print("entryPrice : ", entryPrice)
-            print("positions : ", positions)
-            print("rsi : ", rsi)
-            print("pending_buy_order_id : ", pending_buy_order_id)
-            print("pending_tp_order_id : ", pending_tp_order_id)
+            pprint(positions)
+
             time.sleep(interval)
         except Exception as e:
             print(f"error occurered: {e}")
