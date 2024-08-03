@@ -31,12 +31,17 @@ amount_precision = exchange.markets[symbol]['precision']['amount']
 pending_buy_order_id = None
 pending_tp_order_id = None
 interval = 10   #10초마다 반복
+leverage = 10
 init_delay_count = 0
 buy_count = 0
 timeframe = '5m'
 
 #코드 시작하면 먼저 주문 모두 취소
 exchange.cancel_all_orders(symbol=symbol)
+#해당 타겟의 레버리지 설정
+exchange.set_leverage(leverage, symbol)
+#해당 타겟 모드 격리로 설정
+exchange.set_margin_mode('isolated', symbol)
 
 def main() :
 
@@ -93,7 +98,7 @@ def main() :
                         init_delay_count = 0
                         targetBuyPrice = round(entryPrice*0.98/price_precision)*price_precision
                         new_order = exchange.create_order( symbol = symbol, type = "LIMIT", side = "buy",
-                                                       amount = calculate_amount(avbl, 0.08, 10, targetBuyPrice, amount_precision),
+                                                       amount = calculate_amount(avbl, 0.08, leverage, targetBuyPrice, amount_precision),
                                                         price = targetBuyPrice )
                         pending_buy_order_id = new_order['id']
 
@@ -105,7 +110,7 @@ def main() :
                         targetBuyPrice = round(entryPrice*0.97/price_precision)*price_precision
                         
                         new_order = exchange.create_order( symbol = symbol, type = "LIMIT", side = "buy",
-                                                       amount = calculate_amount(avbl, 0.3, 10, targetBuyPrice, amount_precision),
+                                                       amount = calculate_amount(avbl, 0.3, leverage, targetBuyPrice, amount_precision),
                                                         price = targetBuyPrice )
                         
                         new_tp_order = exchange.create_order( symbol = symbol, type = "TAKE_PROFIT", side = "sell", amount = positionAmt,
@@ -122,7 +127,7 @@ def main() :
 
                         targetBuyPrice = round(entryPrice*0.94/price_precision)*price_precision
                         new_order = exchange.create_order( symbol = symbol, type = "LIMIT", side = "buy",
-                                                       amount = calculate_amount(avbl, 1 , 10, targetBuyPrice, amount_precision),
+                                                       amount = calculate_amount(avbl, 1 , leverage, targetBuyPrice, amount_precision),
                                                         price = targetBuyPrice )
                         
                         
@@ -135,20 +140,25 @@ def main() :
                         
                     #네번째 매수 체결 
                     elif buy_count == 3 and order['status'] == 'closed':
+                        buy_count += 1
                         exchange.cancel_all_orders(symbol=symbol)
 
                         new_tp_order = exchange.create_order( symbol = symbol, type = "TAKE_PROFIT", side = "sell", amount = positionAmt,
-                                        price = round(entryPrice*1.005/price_precision)*price_precision ,
+                                        price = round(entryPrice*1.006/price_precision)*price_precision ,
                                         params = {'stopPrice': round(entryPrice*1.003/price_precision)*price_precision} )
                         
                         sl_order = exchange.create_order( symbol = symbol, type = "STOP", side = "sell", amount = positionAmt,
                                         price = round(entryPrice*0.97/price_precision)*price_precision ,
                                         params = {'stopPrice': round(entryPrice*0.975/price_precision)*price_precision} ) 
 
-                        pending_buy_order_id = new_order['id']
-                        pending_tp_order_id = sl_order['id']
+                        pending_buy_order_id = sl_order['id']
+                        pending_tp_order_id = new_tp_order['id']
 
-                    
+                    elif buy_count == 4 and order['status'] == 'closed' :
+                        buy_count = 0
+                        exchange.cancel_all_orders(symbol=symbol)
+                        clear_pending()
+
                 except Exception as e:
                     print(f"Error checking order {pending_buy_order_id}: {e}")
 
@@ -159,7 +169,7 @@ def main() :
             # 최초 매수     
             if init_cond : 
                 targetBuyPrice = currClose - 1*price_precision
-                adjusted_amount = calculate_amount(avbl, percent = 0.02, leverage= 10, targetBuyPrice = targetBuyPrice, amount_precision = amount_precision)
+                adjusted_amount = calculate_amount(avbl, percent = 0.02, leverage = leverage, targetBuyPrice = targetBuyPrice, amount_precision = amount_precision)
 
                 exchange.cancel_all_orders(symbol=symbol)
                  

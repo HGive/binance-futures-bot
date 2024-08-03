@@ -6,7 +6,7 @@ load_dotenv()  # read file from local .env
 
 api_key = os.environ['BINANCE_API_KEY']
 api_secret = os.environ['BINANCE_API_SECRET']
-symbol = 'BTCDOM/USDT'
+symbol = 'CRV/USDT:USDT'
 
 exchange = ccxt.binance(config = {
     'apiKey' : api_key,
@@ -17,12 +17,14 @@ exchange = ccxt.binance(config = {
     }
 })
 
-markets = exchange.load_markets()
-tickers = exchange.fetch_tickers()
-symbols = tickers.keys()
-usdt_symbols = [x for x in symbols if x.endswith('USDT')]
-print(usdt_symbols)
-print(len(usdt_symbols))
+exchange.set_leverage(15, symbol)
+
+# markets = exchange.load_markets()
+# tickers = exchange.fetch_tickers()
+# symbols = tickers.keys()
+# usdt_symbols = [x for x in symbols if x.endswith('USDT')]
+# print(usdt_symbols)
+# print(len(usdt_symbols))
 # price_precision = exchange.markets[symbol]['precision']['price']
 # pprint(exchange.markets['ZRX/USDT']['precision']['price'])
 # print(exchange.markets[symbol]['precision'])
