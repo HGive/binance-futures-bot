@@ -110,7 +110,7 @@ def main() :
                         targetBuyPrice = round(entryPrice*0.97/price_precision)*price_precision
                         
                         new_order = exchange.create_order( symbol = symbol, type = "LIMIT", side = "buy",
-                                                       amount = calculate_amount(avbl, 0.6, leverage, targetBuyPrice, amount_precision),
+                                                       amount = calculate_amount(avbl, 0.3, leverage, targetBuyPrice, amount_precision),
                                                         price = targetBuyPrice )
                         
                         new_tp_order = exchange.create_order( symbol = symbol, type = "TAKE_PROFIT", side = "sell", amount = positionAmt,
@@ -125,29 +125,46 @@ def main() :
                         buy_count += 1
                         exchange.cancel_all_orders(symbol=symbol)
 
+                        targetBuyPrice = round(entryPrice*0.94/price_precision)*price_precision
+                        new_order = exchange.create_order( symbol = symbol, type = "LIMIT", side = "buy",
+                                                       amount = calculate_amount(avbl, 1 , leverage, targetBuyPrice, amount_precision),
+                                                        price = targetBuyPrice )
+                        
+                        
                         new_tp_order = exchange.create_order( symbol = symbol, type = "TAKE_PROFIT", side = "sell", amount = positionAmt,
-                                        price = round(entryPrice*1.008/price_precision)*price_precision ,
-                                        params = {'stopPrice': round(entryPrice*1.004/price_precision)*price_precision} )
+                                        price = round(entryPrice*1.01/price_precision)*price_precision ,
+                                        params = {'stopPrice': round(entryPrice*1.005/price_precision)*price_precision} )
+
+                        pending_buy_order_id = new_order['id']
+                        pending_tp_order_id = new_tp_order['id']
+                        
+                    #네번째 매수 체결 
+                    elif buy_count == 3 and order['status'] == 'closed':
+                        buy_count += 1
+                        exchange.cancel_all_orders(symbol=symbol)
+
+                        new_tp_order = exchange.create_order( symbol = symbol, type = "TAKE_PROFIT", side = "sell", amount = positionAmt,
+                                        price = round(entryPrice*1.005/price_precision)*price_precision ,
+                                        params = {'stopPrice': round(entryPrice*1.003/price_precision)*price_precision} )
                         
                         sl_order = exchange.create_order( symbol = symbol, type = "STOP", side = "sell", amount = positionAmt,
-                                        price = round(entryPrice*0.973/price_precision)*price_precision ,
-                                        params = {'stopPrice': round(entryPrice*0.98/price_precision)*price_precision} ) 
+                                        price = round(entryPrice*0.97/price_precision)*price_precision ,
+                                        params = {'stopPrice': round(entryPrice*0.975/price_precision)*price_precision} ) 
 
                         pending_buy_order_id = sl_order['id']
                         pending_tp_order_id = new_tp_order['id']
 
-                    elif buy_count == 3 and order['status'] == 'closed' :
+                    elif buy_count == 4 and order['status'] == 'closed' :
                         buy_count = 0
                         exchange.cancel_all_orders(symbol=symbol)
                         clear_pending()
-                        
 
                 except Exception as e:
                     print(f"Error checking order {pending_buy_order_id}: {e}")
 
             # #조건판별 후 buy
             init_cond = ( buy_count == 0 and entryPrice == None and pending_buy_order_id == None and
-                        pending_buy_order_id == None and highest_last_40*0.985 >= currClose and rsi <= 36  ) 
+                        pending_buy_order_id == None and highest_last_40*0.985 >= currClose and rsi <= 35  ) 
                  
             # 최초 매수     
             if init_cond : 
