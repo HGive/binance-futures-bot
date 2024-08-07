@@ -4,12 +4,14 @@ from dotenv import load_dotenv
 import ccxt
 import pandas as pd
 import logging
+import comm
 from pprint import pprint
 from module_rsi import calculate_rsi
 from module_ema import calculate_ema
 
 logging.basicConfig(filename='bot.log', level=logging.INFO, 
                     format='%(asctime)s - %(levelname)s - %(message)s')
+
 
 #바이낸스 객체 생성
 load_dotenv() 
@@ -72,27 +74,27 @@ def main() :
 
             if init_delay_count > 8 :
                 exchange.cancel_all_orders(symbol=symbol)
-                clear_pending()
+                comm.clear_pending()
                 init_delay_count = 0
                 continue
 
             #take profit 체결체크
             if pending_tp_order_id != None:  
-                try:
-                    order = exchange.fetch_order(pending_tp_order_id, symbol)
-                except Exception as e:
-                    logging.error(f"Error checking tp order {pending_tp_order_id}: {e}")
-                    time.sleep(interval)
-                    continue
+                
+                order = comm.fetch_order_with_retry(exchange, pending_tp_order_id, symbol, interval) 
+                if order == None : continue
 
                 if order['status'] == 'closed':
                         buy_count = 0
                         exchange.cancel_all_orders(symbol=symbol)
-                        clear_pending()
+                        comm.clear_pending()
 
             #buy_order 체결되었는지 체크
             if pending_buy_order_id != None: 
                 try:
+
+                    order = comm.fetch_order_with_retry(exchange, pending_buy_order_id, symbol, interval)
+
                     try:
                         order = exchange.fetch_order(pending_buy_order_id, symbol)
                     except:
@@ -110,7 +112,7 @@ def main() :
                         #이후 체결 로그 남기기
                         targetBuyPrice = round(entryPrice*0.985/price_precision)*price_precision
                         new_order = exchange.create_order( symbol = symbol, type = "LIMIT", side = "buy",
-                                                       amount = calculate_amount(avbl, 0.15, leverage, targetBuyPrice, amount_precision),
+                                                       amount = comm.calculate_amount(avbl, 0.15, leverage, targetBuyPrice, amount_precision),
                                                         price = targetBuyPrice )
                         init_delay_count = 0
                         buy_count += 1
@@ -123,7 +125,7 @@ def main() :
                         targetBuyPrice = round(entryPrice*0.97/price_precision)*price_precision
                         
                         new_order = exchange.create_order( symbol = symbol, type = "LIMIT", side = "buy",
-                                                       amount = calculate_amount(avbl, 0.6, leverage, targetBuyPrice, amount_precision),
+                                                       amount = comm.calculate_amount(avbl, 0.6, leverage, targetBuyPrice, amount_precision),
                                                         price = targetBuyPrice )
                         
                         new_tp_order = exchange.create_order( symbol = symbol, type = "TAKE_PROFIT", side = "sell", amount = positionAmt,
@@ -153,10 +155,10 @@ def main() :
                     elif buy_count == 3 and order['status'] == 'closed' :
                         buy_count = 0
                         exchange.cancel_all_orders(symbol=symbol)
-                        clear_pending()
+                        comm.clear_pending()
                         
                 except Exception as e:
-                    print(f"Error creating order : {e}")
+                    print(f"Error creating additional order : {e}")
 
             # #조건판별 후 buy
             init_cond = ( buy_count == 0 and entryPrice == None and pending_buy_order_id == None and
@@ -166,51 +168,32 @@ def main() :
             if init_cond : 
                 try:
                     targetBuyPrice = currClose - 1*price_precision
-                    adjusted_amount = calculate_amount(avbl, percent = 0.05, leverage = leverage, targetBuyPrice = targetBuyPrice, amount_precision = amount_precision)
+                    adjusted_amount = comm.calculate_amount(avbl, percent = 0.05, leverage = leverage, targetBuyPrice = targetBuyPrice, amount_precision = amount_precision)
+                    tp_price = round(targetBuyPrice*1.01/price_precision)*price_precision
+                    tp_stopPrice = round(targetBuyPrice*1.003/price_precision)*price_precision
 
                     exchange.cancel_all_orders(symbol=symbol)
-                    
-                    order = exchange.create_order( symbol = symbol, type = "LIMIT", side = "buy", amount = adjusted_amount, price = targetBuyPrice )
 
-                    #  # take profit
-                    tp_order = exchange.create_order( symbol = symbol, type = "TAKE_PROFIT", side = "sell", amount = adjusted_amount,
-                                            price = round(targetBuyPrice*1.01/price_precision)*price_precision , 
-                                            params = {'stopPrice': round(targetBuyPrice*1.005/price_precision)*price_precision} )
+                    # buy order
+                    buy_order = comm.create_limit_order(exchange, symbol, "buy", adjusted_amount, tp_price, tp_stopPrice)
+                    if buy_order == None : continue
+
+                    # tp order
+                    tp_order = comm.create_take_profit_order(exchange, symbol, "sell", adjusted_amount, tp_price, tp_stopPrice)
+                    if tp_order == None : 
+                        exchange.cancel_order(buy_order['id'], symbol)
+                        continue
                     
-                    pending_buy_order_id = order['id']
+                    pending_buy_order_id = buy_order['id']
                     pending_tp_order_id = tp_order['id']
                 except:
                     logging.error(f"Error creating init order: {e}")
-
-        
-                 
-            # open_orders = exchange.fetch_open_orders(symbol)
-            # pprint(open_orders)
-            
-            # # pprint(exchange.markets[symbol])
-            # print('pending_order_ids : ', pending_buy_order_ids)
-
-            # print("--------------------------")
-            # print("buy_count : ", buy_count)
-            # print("init_delay_count : ", init_delay_count)
-            # pprint(positions)
-
             time.sleep(interval)
         except Exception as e:
             print(f"error occurered: {e}")
             time.sleep(interval)
         
 
-def calculate_amount(avbl,percent, leverage, targetBuyPrice, amount_precision):
-    avbl_pcnt = avbl*percent # 주문할 양 잔고의 percent%
-    avbl_pcnt_xlev = avbl_pcnt*leverage
-    amount = avbl_pcnt_xlev / targetBuyPrice
-    return round(amount/amount_precision)*amount_precision
-    
-def clear_pending():
-    global pending_buy_order_id, pending_tp_order_id
-    pending_buy_order_id = None
-    pending_tp_order_id = None
 
 if __name__ == "__main__":
     main()

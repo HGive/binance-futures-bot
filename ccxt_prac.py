@@ -1,12 +1,13 @@
 import ccxt
 import os
+import comm
 from pprint import pprint
 from dotenv import load_dotenv
 load_dotenv()  # read file from local .env
 
 api_key = os.environ['BINANCE_API_KEY']
 api_secret = os.environ['BINANCE_API_SECRET']
-symbol = 'CRV/USDT:USDT'
+# symbol = 'CRV/USDT:USDT'
 
 exchange = ccxt.binance(config = {
     'apiKey' : api_key,
@@ -17,8 +18,40 @@ exchange = ccxt.binance(config = {
     }
 })
 
-exchange.set_leverage(15, symbol)
-exchange.set_margin_mode('cross', symbol)
+#타겟 심볼
+symbol = 'CHR/USDT:USDT'
+
+#가격 소숫점 자릿수 제한 설정
+exchange.load_markets()
+price_precision = exchange.markets[symbol]['precision']['price']
+amount_precision = exchange.markets[symbol]['precision']['amount']
+ohlcv = exchange.fetch_ohlcv(symbol, "5m", limit=200)
+currClose = ohlcv[-1][4]
+
+#USDT Avbl balance
+balance = exchange.fetch_balance()
+avbl = balance['USDT']['free']
+
+positions = exchange.fetch_positions(symbols=[symbol])
+entryPrice = positions[0]['entryPrice'] if len(positions) > 0 else None
+positionAmt = positions[0]['contracts'] if len(positions) > 0 else None 
+
+targetBuyPrice = currClose - 1*price_precision
+adjusted_amount = comm.calculate_amount(avbl, percent = 0.05, leverage = 10, targetBuyPrice = targetBuyPrice, amount_precision = amount_precision)
+
+new_tp_order = exchange.create_order( symbol = symbol, type = "TAKE_PROFIT", side = "sell", amount = adjusted_amount,
+                                        price = round(targetBuyPrice*1.01/price_precision)*price_precision ,
+                                        params = {'stopPrice': round(targetBuyPrice*1.005/price_precision)*price_precision , 'reduceOnly': True} )
+
+print("price_precision : ", price_precision)
+print("amount_precision : ", amount_precision)
+print("currClose : ", currClose)
+print("targetBuyPrice : ", targetBuyPrice)
+print("adjusted_amount : ", adjusted_amount)
+print("buy : ", adjusted_amount * targetBuyPrice)
+print("order : ", new_tp_order)
+
+
 
 # markets = exchange.load_markets()
 # tickers = exchange.fetch_tickers()
