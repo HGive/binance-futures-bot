@@ -6,8 +6,8 @@ import pandas as pd
 import logging
 import comm
 from pprint import pprint
-from module_rsi import calculate_rsi
-from module_ema import calculate_ema
+from module_rsi import calc_rsi
+from module_ema import calc_ema
 
 logging.basicConfig(filename='bot.log', level=logging.INFO, 
                     format='%(asctime)s - %(levelname)s - %(message)s')
@@ -36,7 +36,7 @@ amount_precision = exchange.markets[symbol]['precision']['amount']
 # min_cost = exchange.markets[symbol]['limits']['cost']['min']
 pending_buy_order_id = None
 pending_tp_order_id = None
-interval = 15   # interval 초마다 반복
+interval = 20   # interval 초마다 반복
 leverage = 10
 init_delay_count = 0
 buy_count = 0
@@ -66,9 +66,9 @@ def main() :
             ohlcv = exchange.fetch_ohlcv(symbol, timeframe, limit=200)
             currClose = ohlcv[-1][4]
             df = pd.DataFrame(ohlcv,columns=['timestamp', 'open', 'high', 'low', 'close', 'volume'])
-            rsi = calculate_rsi(df,14)
-            # ema_99 = calculate_ema(df['close'],window=99)
-            # ema_150 = calculate_ema(df['close'],window=150)
+            rsi = calc_rsi(df,14)
+            # ema_99 = calc_ema(df['close'],window=99)
+            # ema_150 = calc_ema(df['close'],window=150)
             # highest_last_150 = df['high'].rolling(window=150).max().iloc[-1]
             highest_last_40 = df['high'].rolling(window=40).max().iloc[-1]
 
@@ -81,26 +81,18 @@ def main() :
             #take profit 체결체크
             if pending_tp_order_id != None:  
                 
-                order = comm.fetch_order_with_retry(exchange, pending_tp_order_id, symbol, interval) 
-                if order == None : continue
+                order = order = exchange.fetch_order(pending_tp_order_id, symbol)
 
                 if order['status'] == 'closed':
-                        buy_count = 0
-                        exchange.cancel_all_orders(symbol=symbol)
-                        comm.clear_pending()
+                    buy_count = 0
+                    exchange.cancel_all_orders(symbol=symbol)
+                    comm.clear_pending()
 
             #buy_order 체결되었는지 체크
             if pending_buy_order_id != None: 
                 try:
-
-                    order = comm.fetch_order_with_retry(exchange, pending_buy_order_id, symbol, interval)
-
-                    try:
-                        order = exchange.fetch_order(pending_buy_order_id, symbol)
-                    except:
-                        logging.error(f"Error checking buy order {pending_buy_order_id}: {e}")
-                        time.sleep(interval)
-                        continue
+                    
+                    order = exchange.fetch_order(pending_buy_order_id, symbol)
 
                     if buy_count == 0 and order['status'] == 'open' :
                         init_delay_count += 1
@@ -110,10 +102,14 @@ def main() :
                     #첫 매수 체결
                     if buy_count == 0 and order['status'] == 'closed' :
                         #이후 체결 로그 남기기
-                        targetBuyPrice = round(entryPrice*0.985/price_precision)*price_precision
-                        new_order = exchange.create_order( symbol = symbol, type = "LIMIT", side = "buy",
-                                                       amount = comm.calculate_amount(avbl, 0.15, leverage, targetBuyPrice, amount_precision),
-                                                        price = targetBuyPrice )
+                        targetBuyPrice = comm.calc_price(0.985,entryPrice,price_precision)
+                        adjusted_amount = comm.calc_amount(avbl, 0.15, leverage, targetBuyPrice, amount_precision)
+
+                        new_order = comm.custom_limit_order(exchange, symbol, "buy", adjusted_amount, targetBuyPrice)
+                        if new_order == None : 
+                            time.sleep(interval)
+                            continue
+
                         init_delay_count = 0
                         buy_count += 1
                         pending_buy_order_id = new_order['id']
@@ -122,15 +118,21 @@ def main() :
                     elif buy_count == 1 and order['status'] == 'closed':
                         exchange.cancel_all_orders(symbol=symbol)
 
-                        targetBuyPrice = round(entryPrice*0.97/price_precision)*price_precision
+                        targetBuyPrice = comm.calc_price(0.97,entryPrice,price_precision)
+                        adjusted_amount = comm.calc_amount(avbl, 0.7, leverage, targetBuyPrice, amount_precision)
+                        tp_price = comm.calc_price(1.08,entryPrice,price_precision)
+                        tp_stopPrice = comm.calc_price(1.04,entryPrice,price_precision)
+
+                        new_order = comm.custom_limit_order(exchange, symbol, "buy", adjusted_amount, targetBuyPrice)
+                        if new_order == None : 
+                            time.sleep(interval)
+                            continue
                         
-                        new_order = exchange.create_order( symbol = symbol, type = "LIMIT", side = "buy",
-                                                       amount = comm.calculate_amount(avbl, 0.6, leverage, targetBuyPrice, amount_precision),
-                                                        price = targetBuyPrice )
-                        
-                        new_tp_order = exchange.create_order( symbol = symbol, type = "TAKE_PROFIT", side = "sell", amount = positionAmt,
-                                        price = round(entryPrice*1.01/price_precision)*price_precision ,
-                                        params = {'stopPrice': round(entryPrice*1.005/price_precision)*price_precision } )
+                        new_tp_order = comm.custom_tpsl_order(exchange, symbol, "TAKE_PROFIT", "sell", positionAmt, tp_price, tp_stopPrice)
+                        if new_tp_order == None : 
+                            exchange.cancel_order(new_order['id'], symbol)
+                            time.sleep(interval)
+                            continue
 
                         buy_count += 1
                         pending_buy_order_id = new_order['id']
@@ -140,13 +142,22 @@ def main() :
                     elif buy_count == 2 and order['status'] == 'closed':
                         exchange.cancel_all_orders(symbol=symbol)
 
-                        new_tp_order = exchange.create_order( symbol = symbol, type = "TAKE_PROFIT", side = "sell", amount = positionAmt,
-                                        price = round(entryPrice*1.008/price_precision)*price_precision ,
-                                        params = {'stopPrice': round(entryPrice*1.004/price_precision)*price_precision} )
+                        sl_price = comm.calc_price(0.973 ,entryPrice, price_precision)
+                        sl_stopPrice = comm.calc_price(0.99 ,entryPrice, price_precision)
+                        tp_price = comm.calc_price(1.06,entryPrice,price_precision)
+                        tp_stopPrice = comm.calc_price(1.02,entryPrice,price_precision)
+
+                        sl_order = comm.custom_tpsl_order(exchange, symbol, "STOP", "sell", positionAmt, sl_price, sl_stopPrice)
+                        if sl_order == None :
+                            time.sleep(interval)
+                            continue
                         
-                        sl_order = exchange.create_order( symbol = symbol, type = "STOP", side = "sell", amount = positionAmt,
-                                        price = round(entryPrice*0.973/price_precision)*price_precision ,
-                                        params = {'stopPrice': round(entryPrice*0.99/price_precision)*price_precision} ) 
+                        new_tp_order = comm.custom_tpsl_order(exchange, symbol, "TAKE_PROFIT", "sell", positionAmt, tp_price, tp_stopPrice)
+                        if new_tp_order == None:
+                            exchange.cancel_order(sl_order['id'], symbol)
+                            time.sleep(interval)
+                            continue
+                        
 
                         buy_count += 1
                         pending_buy_order_id = sl_order['id']
@@ -158,7 +169,7 @@ def main() :
                         comm.clear_pending()
                         
                 except Exception as e:
-                    print(f"Error creating additional order : {e}")
+                    logging.error(f"Error creating additional order : {e}")
 
             # #조건판별 후 buy
             init_cond = ( buy_count == 0 and entryPrice == None and pending_buy_order_id == None and
@@ -168,20 +179,24 @@ def main() :
             if init_cond : 
                 try:
                     targetBuyPrice = currClose - 1*price_precision
-                    adjusted_amount = comm.calculate_amount(avbl, percent = 0.05, leverage = leverage, targetBuyPrice = targetBuyPrice, amount_precision = amount_precision)
-                    tp_price = round(targetBuyPrice*1.01/price_precision)*price_precision
-                    tp_stopPrice = round(targetBuyPrice*1.003/price_precision)*price_precision
+                    adjusted_amount = comm.calc_amount(avbl, percent = 0.05, leverage = leverage, targetBuyPrice = targetBuyPrice, amount_precision = amount_precision)
+                    tp_price = comm.calc_price(1.01, targetBuyPrice, price_precision)
+                    tp_stopPrice = comm.calc_price(1.004, targetBuyPrice, price_precision)
 
                     exchange.cancel_all_orders(symbol=symbol)
 
                     # buy order
-                    buy_order = comm.create_limit_order(exchange, symbol, "buy", adjusted_amount, tp_price, tp_stopPrice)
-                    if buy_order == None : continue
+                    buy_order = comm.custom_limit_order(exchange, symbol, "buy", adjusted_amount, tp_price, tp_stopPrice)
+                    if buy_order == None : 
+                        time.sleep(interval)
+                        continue
 
                     # tp order
-                    tp_order = comm.create_take_profit_order(exchange, symbol, "sell", adjusted_amount, tp_price, tp_stopPrice)
+                    tp_order = comm.custom_tpsl_order(exchange, symbol,"TAKE_PROFIT", "sell", adjusted_amount, tp_price, tp_stopPrice)
                     if tp_order == None : 
+                        #원자성을 위해서 buy_order
                         exchange.cancel_order(buy_order['id'], symbol)
+                        time.sleep(interval)
                         continue
                     
                     pending_buy_order_id = buy_order['id']
@@ -190,7 +205,7 @@ def main() :
                     logging.error(f"Error creating init order: {e}")
             time.sleep(interval)
         except Exception as e:
-            print(f"error occurered: {e}")
+            logging.error(f"error occurered: {e}")
             time.sleep(interval)
         
 

@@ -37,7 +37,7 @@ entryPrice = positions[0]['entryPrice'] if len(positions) > 0 else None
 positionAmt = positions[0]['contracts'] if len(positions) > 0 else None 
 
 targetBuyPrice = currClose - 1*price_precision
-adjusted_amount = comm.calculate_amount(avbl, percent = 0.05, leverage = 10, targetBuyPrice = targetBuyPrice, amount_precision = amount_precision)
+adjusted_amount = comm.calc_amount(avbl, percent = 0.05, leverage = 10, targetBuyPrice = targetBuyPrice, amount_precision = amount_precision)
 
 new_tp_order = exchange.create_order( symbol = symbol, type = "TAKE_PROFIT", side = "sell", amount = adjusted_amount,
                                         price = round(targetBuyPrice*1.01/price_precision)*price_precision ,

@@ -4,8 +4,8 @@ from dotenv import load_dotenv
 import ccxt
 import pandas as pd
 from pprint import pprint
-from module_rsi import calculate_rsi
-from module_ema import calculate_ema
+from module_rsi import calc_rsi
+from module_ema import calc_ema
 
 #바이낸스 객체 생성
 load_dotenv() 
@@ -60,9 +60,9 @@ def main() :
             ohlcv = exchange.fetch_ohlcv(symbol, timeframe, limit=200)
             currClose = ohlcv[-1][4]
             df = pd.DataFrame(ohlcv,columns=['timestamp', 'open', 'high', 'low', 'close', 'volume'])
-            rsi = calculate_rsi(df,14)
-            # ema_99 = calculate_ema(df['close'],window=99)
-            # ema_150 = calculate_ema(df['close'],window=150)
+            rsi = calc_rsi(df,14)
+            # ema_99 = calc_ema(df['close'],window=99)
+            # ema_150 = calc_ema(df['close'],window=150)
             # highest_last_150 = df['high'].rolling(window=150).max().iloc[-1]
             highest_last_40 = df['high'].rolling(window=40).max().iloc[-1]
 
@@ -98,7 +98,7 @@ def main() :
                         init_delay_count = 0
                         targetBuyPrice = round(entryPrice*0.98/price_precision)*price_precision
                         new_order = exchange.create_order( symbol = symbol, type = "LIMIT", side = "buy",
-                                                       amount = calculate_amount(avbl, 0.15, leverage, targetBuyPrice, amount_precision),
+                                                       amount = calc_amount(avbl, 0.15, leverage, targetBuyPrice, amount_precision),
                                                         price = targetBuyPrice )
                         pending_buy_order_id = new_order['id']
 
@@ -110,7 +110,7 @@ def main() :
                         targetBuyPrice = round(entryPrice*0.97/price_precision)*price_precision
                         
                         new_order = exchange.create_order( symbol = symbol, type = "LIMIT", side = "buy",
-                                                       amount = calculate_amount(avbl, 0.3, leverage, targetBuyPrice, amount_precision),
+                                                       amount = calc_amount(avbl, 0.3, leverage, targetBuyPrice, amount_precision),
                                                         price = targetBuyPrice )
                         
                         new_tp_order = exchange.create_order( symbol = symbol, type = "TAKE_PROFIT", side = "sell", amount = positionAmt,
@@ -127,7 +127,7 @@ def main() :
 
                         targetBuyPrice = round(entryPrice*0.94/price_precision)*price_precision
                         new_order = exchange.create_order( symbol = symbol, type = "LIMIT", side = "buy",
-                                                       amount = calculate_amount(avbl, 1 , leverage, targetBuyPrice, amount_precision),
+                                                       amount = calc_amount(avbl, 1 , leverage, targetBuyPrice, amount_precision),
                                                         price = targetBuyPrice )
                         
                         
@@ -169,7 +169,7 @@ def main() :
             # 최초 매수     
             if init_cond : 
                 targetBuyPrice = currClose - 1*price_precision
-                adjusted_amount = calculate_amount(avbl, percent = 0.05, leverage = leverage, targetBuyPrice = targetBuyPrice, amount_precision = amount_precision)
+                adjusted_amount = calc_amount(avbl, percent = 0.05, leverage = leverage, targetBuyPrice = targetBuyPrice, amount_precision = amount_precision)
 
                 exchange.cancel_all_orders(symbol=symbol)
                  
@@ -200,7 +200,7 @@ def main() :
             time.sleep(interval)
         
 
-def calculate_amount(avbl,percent, leverage, targetBuyPrice, amount_precision):
+def calc_amount(avbl,percent, leverage, targetBuyPrice, amount_precision):
     avbl_pcnt = avbl*percent # 주문할 양 잔고의 percent%
     avbl_pcnt_xlev = avbl_pcnt*leverage
     amount = avbl_pcnt_xlev / targetBuyPrice

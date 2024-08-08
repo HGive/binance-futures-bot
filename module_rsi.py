@@ -1,6 +1,6 @@
 import pandas as pd
 
-def calculate_rsi(ohlc: pd.DataFrame, period: int = 14):
+def calc_rsi(ohlc: pd.DataFrame, period: int = 14):
     ohlc = ohlc['close'].astype(float)
     delta = ohlc.diff()
     gains, declines = delta.copy(), delta.copy()
@@ -17,7 +17,7 @@ def calculate_rsi(ohlc: pd.DataFrame, period: int = 14):
     return rsi.iloc[-1]  # 마지막 값(현재 RSI)만 반환
 
 
-# def calculate_rsi(data, period=14):
+# def calc_rsi(data, period=14):
 #     changes = []
 #     gains = []
 #     losses = []
