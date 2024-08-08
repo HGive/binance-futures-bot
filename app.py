@@ -1,16 +1,26 @@
 import os
-import time
 from dotenv import load_dotenv
 import ccxt
 import pandas as pd
 import logging
+from pytz import timezone
+from datetime import datetime
+import time
 import comm
-from pprint import pprint
 from module_rsi import calc_rsi
-from module_ema import calc_ema
+# from module_ema import calc_ema
 
-logging.basicConfig(filename='bot.log', level=logging.INFO, 
-                    format='%(asctime)s - %(levelname)s - %(message)s')
+#로깅 설정
+def timetz(*args):
+    return datetime.now(tz).timetuple()
+tz = timezone('Asia/Seoul') # UTC, Asia/Shanghai, Europe/Berlin
+logging.Formatter.converter = timetz
+logging.basicConfig(
+    format="%(asctime)s %(levelname)s: %(message)s",
+    level=logging.INFO,
+    datefmt="%Y-%m-%d %H:%M:%S",
+)
+# logging.info('Timezone: ' + str(tz))
 
 
 #바이낸스 객체 생성
@@ -173,14 +183,14 @@ def main() :
 
             # #조건판별 후 buy
             init_cond = ( buy_count == 0 and entryPrice == None and pending_buy_order_id == None and
-                        pending_buy_order_id == None and highest_last_40*0.985 >= currClose and rsi <= 36  ) 
+                        pending_buy_order_id == None and highest_last_40*0.988 >= currClose and rsi <= 40  ) 
                  
             # 최초 매수     
             if init_cond : 
                 try:
                     targetBuyPrice = currClose - 1*price_precision
                     adjusted_amount = comm.calc_amount(avbl, percent = 0.05, leverage = leverage, targetBuyPrice = targetBuyPrice, amount_precision = amount_precision)
-                    tp_price = comm.calc_price(1.01, targetBuyPrice, price_precision)
+                    tp_price = comm.calc_price(1.08, targetBuyPrice, price_precision)
                     tp_stopPrice = comm.calc_price(1.004, targetBuyPrice, price_precision)
 
                     exchange.cancel_all_orders(symbol=symbol)
@@ -201,7 +211,7 @@ def main() :
                     
                     pending_buy_order_id = buy_order['id']
                     pending_tp_order_id = tp_order['id']
-                except:
+                except Exception as e:
                     logging.error(f"Error creating init order: {e}")
             time.sleep(interval)
         except Exception as e:

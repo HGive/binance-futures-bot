@@ -2,6 +2,7 @@ import ccxt
 import pandas as pd
 import pprint
 import numpy as np
+import time
 
 # 초기 설정
 ticker = 'TAO/USDT'
@@ -21,6 +22,8 @@ exchange = ccxt.binance({
     }
 })
 
-historical_data = exchange.fetch_ohlcv(ticker, '5m', limit= 1000)
-df = pd.DataFrame(historical_data, columns=['timestamp', 'open', 'high', 'low', 'close', 'volume'])
-print(df)
+print()
+
+# historical_data = exchange.fetch_ohlcv(ticker, '5m', limit= 1000)
+# df = pd.DataFrame(historical_data, columns=['timestamp', 'open', 'high', 'low', 'close', 'volume'])
+# print(df)

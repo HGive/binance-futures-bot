@@ -1,6 +1,7 @@
 import ccxt
 import os
 import comm
+import time
 from pprint import pprint
 from dotenv import load_dotenv
 load_dotenv()  # read file from local .env
