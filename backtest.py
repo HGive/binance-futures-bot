@@ -21,8 +21,16 @@ exchange = ccxt.binance({
         'defaultType': 'future'  # 바이너리 선물 거래 설정
     }
 })
-
-print()
+ohlcv = exchange.fetch_ohlcv(ticker, '5m', limit=200)
+currClose = ohlcv[-1][4]
+df = pd.DataFrame(ohlcv,columns=['timestamp', 'open', 'high', 'low', 'close', 'volume'])
+middle_value = (df['high'] + df['close']) / 2
+highest_last_40 = df['high'].rolling(window=40).max().iloc[-1]
+highest_middle_40 = middle_value.rolling(window=40).max().iloc[-1]
+print(df)
+print(middle_value)
+print(highest_last_40)
+print(highest_middle_40)
 
 # historical_data = exchange.fetch_ohlcv(ticker, '5m', limit= 1000)
 # df = pd.DataFrame(historical_data, columns=['timestamp', 'open', 'high', 'low', 'close', 'volume'])
