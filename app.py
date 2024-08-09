@@ -16,6 +16,7 @@ def timetz(*args):
 tz = timezone('Asia/Seoul') # UTC, Asia/Shanghai, Europe/Berlin
 logging.Formatter.converter = timetz
 logging.basicConfig(
+    filename='bot.log',
     format="%(asctime)s %(levelname)s: %(message)s",
     level=logging.INFO,
     datefmt="%Y-%m-%d %H:%M:%S",
@@ -222,6 +223,8 @@ def main() :
                     pending_tp_order_id = tp_order['id']
                 except Exception as e:
                     logging.error(f"Error creating init order: {e}")
+
+            logging.info('반복')
             time.sleep(interval)
         except Exception as e:
             logging.error(f"error occurered: {e}")
