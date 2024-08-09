@@ -1,7 +1,4 @@
-def clear_pending():
-    global pending_buy_order_id, pending_tp_order_id
-    pending_buy_order_id = None
-    pending_tp_order_id = None
+import logging
 
 def calc_amount(avbl,percent, leverage, targetBuyPrice, amount_precision):
     avbl_pcnt = avbl*percent # 주문할 양 잔고의 percent%
@@ -61,3 +58,4 @@ def custom_tpsl_order(exchange, symbol, type, side, amount, price, stop_price ):
     except Exception as e:
         logging.error(f"Error creating take profit order: {e}")
         return None
+    

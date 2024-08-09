@@ -59,6 +59,8 @@ exchange.set_leverage(leverage, symbol)
 #해당 타겟 모드 격리로 설정
 exchange.set_margin_mode('isolated', symbol)
 
+logging.info("***************   Bot has started!! ***************")
+
 def main() :
 
     global buy_count, price_precision, amount_precision, pending_buy_order_id, pending_tp_order_id, init_delay_count
@@ -88,7 +90,7 @@ def main() :
 
             if init_delay_count > 8 :
                 exchange.cancel_all_orders(symbol=symbol)
-                comm.clear_pending()
+                pending_buy_order_id, pending_tp_order_id = None, None
                 init_delay_count = 0
                 continue
 
@@ -98,10 +100,10 @@ def main() :
                 order = order = exchange.fetch_order(pending_tp_order_id, symbol)
 
                 if order['status'] == 'closed':
-                    logging.info("-------------------------   take profit !! -------------------------")
+                    logging.info("---------------   take profit !! ---------------")
                     buy_count = 0
                     exchange.cancel_all_orders(symbol=symbol)
-                    comm.clear_pending()
+                    pending_buy_order_id, pending_tp_order_id = None, None
 
             #buy_order 체결되었는지 체크
             if pending_buy_order_id != None: 
@@ -180,10 +182,10 @@ def main() :
                         pending_tp_order_id = new_tp_order['id']
 
                     elif buy_count == 3 and order['status'] == 'closed' :
-                        logging.info("-------------------------   stop loss !! -------------------------")
+                        logging.info("---------------   stop loss !! ---------------")
                         buy_count = 0
                         exchange.cancel_all_orders(symbol=symbol)
-                        comm.clear_pending()
+                        pending_buy_order_id, pending_tp_order_id = None, None
                         
                 except Exception as e:
                     logging.error(f"Error creating additional order : {e}")
