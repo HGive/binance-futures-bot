@@ -140,14 +140,14 @@ def main() :
                         targetBuyPrice = comm.calc_price(0.95,entryPrice,price_precision)
                         adjusted_amount = comm.calc_amount(avbl, 0.8, leverage, targetBuyPrice, amount_precision)
                         tp_price = comm.calc_price(1.01,entryPrice,price_precision)
-                        tp_stopPrice = comm.calc_price(1.004,entryPrice,price_precision)
+                        # tp_stopPrice = comm.calc_price(1.01,entryPrice,price_precision)
 
                         new_order = comm.custom_limit_order(exchange, symbol, "buy", adjusted_amount, targetBuyPrice)
                         if new_order == None : 
                             time.sleep(interval)
                             continue
                         
-                        new_tp_order = comm.custom_tpsl_order(exchange, symbol, "TAKE_PROFIT", "sell", positionAmt, tp_price, tp_stopPrice)
+                        new_tp_order = comm.custom_tpsl_order(exchange, symbol, "TAKE_PROFIT", "sell", positionAmt, tp_price, tp_price)
                         if new_tp_order == None : 
                             exchange.cancel_order(new_order['id'], symbol)
                             time.sleep(interval)
@@ -161,23 +161,22 @@ def main() :
                     elif buy_count == 2 and order['status'] == 'closed':
                         exchange.cancel_all_orders(symbol=symbol)
 
-                        sl_price = comm.calc_price(0.97 ,entryPrice, price_precision)
-                        sl_stopPrice = comm.calc_price(0.99 ,entryPrice, price_precision)
+                        sl_price = comm.calc_price(0.98 ,entryPrice, price_precision)
+                        # sl_stopPrice = comm.calc_price(0.99 ,entryPrice, price_precision)
                         tp_price = comm.calc_price(1.008,entryPrice,price_precision)
-                        tp_stopPrice = comm.calc_price(1.004,entryPrice,price_precision)
+                        # tp_stopPrice = comm.calc_price(1.004,entryPrice,price_precision)
 
-                        sl_order = comm.custom_tpsl_order(exchange, symbol, "STOP", "sell", positionAmt, sl_price, sl_stopPrice)
+                        sl_order = comm.custom_tpsl_order(exchange, symbol, "STOP", "sell", positionAmt, sl_price, sl_price)
                         if sl_order == None :
                             time.sleep(interval)
                             continue
                         
-                        new_tp_order = comm.custom_tpsl_order(exchange, symbol, "TAKE_PROFIT", "sell", positionAmt, tp_price, tp_stopPrice)
+                        new_tp_order = comm.custom_tpsl_order(exchange, symbol, "TAKE_PROFIT", "sell", positionAmt, tp_price, tp_price)
                         if new_tp_order == None:
                             exchange.cancel_order(sl_order['id'], symbol)
                             time.sleep(interval)
                             continue
                         
-
                         buy_count += 1
                         pending_buy_order_id = sl_order['id']
                         pending_tp_order_id = new_tp_order['id']
@@ -189,11 +188,11 @@ def main() :
                         pending_buy_order_id, pending_tp_order_id = None, None
                         
                 except Exception as e:
-                    logging.error(f"Error creating additional order : {e}")
+                    logging.error(f"Error creating additional order buy_cnt = {buy_count} : {e}")
 
             # #조건판별 후 buy
             init_cond = ( buy_count == 0 and entryPrice == None and pending_buy_order_id == None and
-                        pending_buy_order_id == None and highest_last_40*0.98 >= currClose and rsi <= 36  ) 
+                        pending_buy_order_id == None and highest_last_40*0.98 >= currClose and rsi <= 37  ) 
                  
             # 최초 매수     
             if init_cond : 
@@ -201,7 +200,7 @@ def main() :
                     targetBuyPrice = currClose - 2*price_precision
                     adjusted_amount = comm.calc_amount(avbl, percent = 0.04, leverage = leverage, targetBuyPrice = targetBuyPrice, amount_precision = amount_precision)
                     tp_price = comm.calc_price(1.01, targetBuyPrice, price_precision)
-                    tp_stopPrice = comm.calc_price(1.004, targetBuyPrice, price_precision)
+                    # tp_stopPrice = comm.calc_price(1.005, targetBuyPrice, price_precision)
 
                     exchange.cancel_all_orders(symbol=symbol)
 
@@ -212,7 +211,7 @@ def main() :
                         continue
 
                     # tp order
-                    tp_order = comm.custom_tpsl_order(exchange, symbol,"TAKE_PROFIT", "sell", adjusted_amount, tp_price, tp_stopPrice)
+                    tp_order = comm.custom_tpsl_order(exchange, symbol,"TAKE_PROFIT", "sell", adjusted_amount, tp_price, tp_price)
                     if tp_order == None : 
                         #원자성을 위해서 buy_order
                         exchange.cancel_order(buy_order['id'], symbol)
@@ -224,7 +223,6 @@ def main() :
                 except Exception as e:
                     logging.error(f"Error creating init order: {e}")
 
-            logging.info('반복')
             time.sleep(interval)
         except Exception as e:
             logging.error(f"error occurered: {e}")
