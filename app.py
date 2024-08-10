@@ -71,7 +71,7 @@ currClose = None
 df = None
 rsi = None
 highest_last_40 = None
-init_delay_count = None
+init_delay_count = 0
 mode = None
 
 def main() :
@@ -96,7 +96,8 @@ def main() :
             # highest_last_40 = df['high'].rolling(window=40).max().iloc[-1]
             # df['high']와 df['close']의 중간값(평균)을 계산
             # 40개 윈도우에서 중간값의 최대값을 계산
-            highest_last_40 = ((df['high'] + df['close']) / 2).rolling(window=40).max().iloc[-1]
+            middle_value = (df['high'] + df['close']) / 2
+            highest_last_40 = middle_value.rolling(window=40).max().iloc[-1]
 
             if init_delay_count > 8 :
                 exchange.cancel_all_orders(symbol=symbol)
