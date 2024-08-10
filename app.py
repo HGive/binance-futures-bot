@@ -62,20 +62,30 @@ exchange.set_margin_mode('isolated', symbol)
 
 logging.info("***************   Bot has started!! ***************")
 
+balance = None
+avbl = None
+positions = None
+positionAmt = None
+ohlcv = None
+currClose = None
+df = None
+rsi = None
+highest_last_40 = None
+init_delay_count = None
+mode = None
+
 def main() :
 
-    global buy_count, price_precision, amount_precision, pending_buy_order_id, pending_tp_order_id, init_delay_count
+    global buy_count, price_precision, amount_precision, pending_buy_order_id, pending_tp_order_id, init_delay_count, balance, avbl, positions, positionAmt, ohlcv, currClose, df, rsi, highest_last_40, init_delay_count
 
     while True:
         try:
             #USDT Avbl balance
             balance = exchange.fetch_balance()
             avbl = balance['USDT']['free']
-
             positions = exchange.fetch_positions(symbols=[symbol])
             entryPrice = positions[0]['entryPrice'] if len(positions) > 0 else None
-            positionAmt = positions[0]['contracts'] if len(positions) > 0 else None 
-
+            positionAmt = positions[0]['contracts'] if len(positions) > 0 else None  
             ohlcv = exchange.fetch_ohlcv(symbol, timeframe, limit=200)
             currClose = ohlcv[-1][4]
             df = pd.DataFrame(ohlcv,columns=['timestamp', 'open', 'high', 'low', 'close', 'volume'])
@@ -85,9 +95,8 @@ def main() :
             # highest_last_150 = df['high'].rolling(window=150).max().iloc[-1]
             # highest_last_40 = df['high'].rolling(window=40).max().iloc[-1]
             # df['high']와 df['close']의 중간값(평균)을 계산
-            middle_value = (df['high'] + df['close']) / 2
             # 40개 윈도우에서 중간값의 최대값을 계산
-            highest_last_40 = middle_value.rolling(window=40).max().iloc[-1]
+            highest_last_40 = ((df['high'] + df['close']) / 2).rolling(window=40).max().iloc[-1]
 
             if init_delay_count > 8 :
                 exchange.cancel_all_orders(symbol=symbol)
@@ -98,9 +107,9 @@ def main() :
             #take profit 체결체크
             if pending_tp_order_id != None:  
                 
-                order = order = exchange.fetch_order(pending_tp_order_id, symbol)
+                pending_tp_order = exchange.fetch_order(pending_tp_order_id, symbol)
 
-                if order['status'] == 'closed':
+                if pending_tp_order['status'] == 'closed':
                     logging.info("---------------   take profit !! ---------------")
                     buy_count = 0
                     exchange.cancel_all_orders(symbol=symbol)
@@ -110,60 +119,60 @@ def main() :
             if pending_buy_order_id != None: 
                 try:
                     
-                    order = exchange.fetch_order(pending_buy_order_id, symbol)
+                    pending_buy_order = exchange.fetch_order(pending_buy_order_id, symbol)
 
-                    if buy_count == 0 and order['status'] == 'open' :
+                    if buy_count == 0 and pending_buy_order['status'] == 'open' :
                         init_delay_count += 1
                         logging.info(f'----- init_delay_count : {init_delay_count} -----')
                         time.sleep(interval)
                         continue
                     
                     #첫 매수 체결
-                    if buy_count == 0 and order['status'] == 'closed' :
+                    if buy_count == 0 and pending_buy_order['status'] == 'closed' :
                         #이후 체결 로그 남기기
-                        targetBuyPrice = comm.calc_price(0.975,entryPrice,price_precision)
+                        targetBuyPrice = comm.calc_price(0.98,entryPrice,price_precision)
                         adjusted_amount = comm.calc_amount(avbl, 0.12, leverage, targetBuyPrice, amount_precision)
 
-                        new_order = comm.custom_limit_order(exchange, symbol, "buy", adjusted_amount, targetBuyPrice)
-                        if new_order == None : 
+                        buy_order = comm.custom_limit_order(exchange, symbol, "buy", adjusted_amount, targetBuyPrice)
+                        if buy_order == None : 
                             time.sleep(interval)
                             continue
 
                         init_delay_count = 0
                         buy_count += 1
-                        pending_buy_order_id = new_order['id']
+                        pending_buy_order_id = buy_order['id']
 
                     #두번째 매수 체결
-                    elif buy_count == 1 and order['status'] == 'closed':
+                    elif buy_count == 1 and pending_buy_order['status'] == 'closed':
                         exchange.cancel_all_orders(symbol=symbol)
 
-                        targetBuyPrice = comm.calc_price(0.95,entryPrice,price_precision)
+                        targetBuyPrice = comm.calc_price(0.96,entryPrice,price_precision)
                         adjusted_amount = comm.calc_amount(avbl, 0.8, leverage, targetBuyPrice, amount_precision)
                         tp_price = comm.calc_price(1.01,entryPrice,price_precision)
                         # tp_stopPrice = comm.calc_price(1.01,entryPrice,price_precision)
 
-                        new_order = comm.custom_limit_order(exchange, symbol, "buy", adjusted_amount, targetBuyPrice)
-                        if new_order == None : 
+                        buy_order = comm.custom_limit_order(exchange, symbol, "buy", adjusted_amount, targetBuyPrice)
+                        if buy_order == None : 
                             time.sleep(interval)
                             continue
                         
-                        new_tp_order = comm.custom_tpsl_order(exchange, symbol, "TAKE_PROFIT", "sell", positionAmt, tp_price, tp_price)
-                        if new_tp_order == None : 
-                            exchange.cancel_order(new_order['id'], symbol)
+                        tp_order = comm.custom_tpsl_order(exchange, symbol, "TAKE_PROFIT", "sell", positionAmt, tp_price, tp_price)
+                        if tp_order == None : 
+                            exchange.cancel_order(buy_order['id'], symbol)
                             time.sleep(interval)
                             continue
 
                         buy_count += 1
-                        pending_buy_order_id = new_order['id']
-                        pending_tp_order_id = new_tp_order['id']
+                        pending_buy_order_id = buy_order['id']
+                        pending_tp_order_id = tp_order['id']
 
                     #세번째 매수 체결
-                    elif buy_count == 2 and order['status'] == 'closed':
+                    elif buy_count == 2 and pending_buy_order['status'] == 'closed':
                         exchange.cancel_all_orders(symbol=symbol)
 
-                        sl_price = comm.calc_price(0.98 ,entryPrice, price_precision)
+                        sl_price = comm.calc_price(0.975 ,entryPrice, price_precision)
                         # sl_stopPrice = comm.calc_price(0.99 ,entryPrice, price_precision)
-                        tp_price = comm.calc_price(1.008,entryPrice,price_precision)
+                        tp_price = comm.calc_price(1.007,entryPrice,price_precision)
                         # tp_stopPrice = comm.calc_price(1.004,entryPrice,price_precision)
 
                         sl_order = comm.custom_tpsl_order(exchange, symbol, "STOP", "sell", positionAmt, sl_price, sl_price)
@@ -171,17 +180,17 @@ def main() :
                             time.sleep(interval)
                             continue
                         
-                        new_tp_order = comm.custom_tpsl_order(exchange, symbol, "TAKE_PROFIT", "sell", positionAmt, tp_price, tp_price)
-                        if new_tp_order == None:
+                        tp_order = comm.custom_tpsl_order(exchange, symbol, "TAKE_PROFIT", "sell", positionAmt, tp_price, tp_price)
+                        if tp_order == None:
                             exchange.cancel_order(sl_order['id'], symbol)
                             time.sleep(interval)
                             continue
                         
                         buy_count += 1
                         pending_buy_order_id = sl_order['id']
-                        pending_tp_order_id = new_tp_order['id']
+                        pending_tp_order_id = tp_order['id']
 
-                    elif buy_count == 3 and order['status'] == 'closed' :
+                    elif buy_count == 3 and pending_buy_order['status'] == 'closed' :
                         logging.info("---------------   stop loss !! ---------------")
                         buy_count = 0
                         exchange.cancel_all_orders(symbol=symbol)
@@ -192,12 +201,12 @@ def main() :
 
             # #조건판별 후 buy
             init_cond = ( buy_count == 0 and entryPrice == None and pending_buy_order_id == None and
-                        pending_buy_order_id == None and highest_last_40*0.98 >= currClose and rsi <= 37  ) 
+                        pending_buy_order_id == None and highest_last_40*0.985 >= currClose and rsi <= 40  ) 
                  
             # 최초 매수     
             if init_cond : 
                 try:
-                    targetBuyPrice = currClose - 2*price_precision
+                    targetBuyPrice = currClose - 1*price_precision
                     adjusted_amount = comm.calc_amount(avbl, percent = 0.04, leverage = leverage, targetBuyPrice = targetBuyPrice, amount_precision = amount_precision)
                     tp_price = comm.calc_price(1.01, targetBuyPrice, price_precision)
                     # tp_stopPrice = comm.calc_price(1.005, targetBuyPrice, price_precision)
@@ -228,7 +237,5 @@ def main() :
             logging.error(f"error occurered: {e}")
             time.sleep(interval)
         
-
-
 if __name__ == "__main__":
     main()
