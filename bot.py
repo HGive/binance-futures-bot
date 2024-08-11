@@ -91,9 +91,9 @@ def main() :
             currClose = ohlcv[-1][4]
             df = pd.DataFrame(ohlcv,columns=['timestamp', 'open', 'high', 'low', 'close', 'volume'])
             df['ma99'] = df['close'].rolling(window = 99).mean()
-            last_60 = df.tail(60)
-            above_ma99_cnt = np.sum(last_60['close'] > last_60['ma99'] )
-            is_bull = above_ma99_cnt > 51
+            last_70 = df.tail(70)
+            above_ma99_cnt = np.sum(last_70['close'] > last_70['ma99'] )
+            is_bull = above_ma99_cnt > 61
             rsi = calc_rsi(df,14)
             middle_value = (df['high'] + df['close']) / 2
             highest_last_40 = middle_value.rolling(window=40).max().iloc[-1]
@@ -130,7 +130,7 @@ def main() :
                     #첫 매수 체결
                     if buy_count == 0 and pending_buy_order['status'] == 'closed' :
                         #이후 체결 로그 남기기
-                        targetBuyPrice = comm.calc_price(0.985,entryPrice,price_precision)
+                        targetBuyPrice = comm.calc_price(0.99,entryPrice,price_precision)
                         adjusted_amount = comm.calc_amount(avbl, 0.12, leverage, targetBuyPrice, amount_precision)
 
                         buy_order = comm.custom_limit_order(exchange, symbol, "buy", adjusted_amount, targetBuyPrice)
@@ -148,7 +148,7 @@ def main() :
 
                         targetBuyPrice = comm.calc_price(0.97,entryPrice,price_precision)
                         adjusted_amount = comm.calc_amount(avbl, 0.8, leverage, targetBuyPrice, amount_precision)
-                        tp_price = comm.calc_price(1.006,entryPrice,price_precision)
+                        tp_price = comm.calc_price(1.005,entryPrice,price_precision)
                         # tp_stopPrice = comm.calc_price(1.01,entryPrice,price_precision)
 
                         buy_order = comm.custom_limit_order(exchange, symbol, "buy", adjusted_amount, targetBuyPrice)
@@ -170,9 +170,9 @@ def main() :
                     elif buy_count == 2 and pending_buy_order['status'] == 'closed':
                         exchange.cancel_all_orders(symbol=symbol)
 
-                        sl_price = comm.calc_price(0.975 ,entryPrice, price_precision)
+                        sl_price = comm.calc_price(0.98 ,entryPrice, price_precision)
                         # sl_stopPrice = comm.calc_price(0.99 ,entryPrice, price_precision)
-                        tp_price = comm.calc_price(1.005,entryPrice,price_precision)
+                        tp_price = comm.calc_price(1.004,entryPrice,price_precision)
                         # tp_stopPrice = comm.calc_price(1.004,entryPrice,price_precision)
 
                         sl_order = comm.custom_tpsl_order(exchange, symbol, "STOP", "sell", positionAmt, sl_price, sl_price)
@@ -203,13 +203,13 @@ def main() :
             init_cond = ( buy_count == 0 and entryPrice == None and pending_buy_order_id == None and
                         pending_buy_order_id == None ) 
             
-            market_mode = highest_last_40*0.995 >= currClose if is_bull else highest_last_40*0.99 >= currClose and rsi <= 40
+            market_mode = (highest_last_40*0.995 >= currClose ) if is_bull else (highest_last_40*0.992 >= currClose or rsi <= 35) 
                  
             # 최초 매수     
             if init_cond and market_mode : 
                 try:
                     adjusted_amount = comm.calc_amount(avbl, percent = 0.04, leverage = leverage, targetBuyPrice = currClose, amount_precision = amount_precision)
-                    tp_price = comm.calc_price(1.006, currClose, price_precision)
+                    tp_price = comm.calc_price(1.005, currClose, price_precision)
                     # tp_stopPrice = comm.calc_price(1.005, currClose, price_precision)
 
                     exchange.cancel_all_orders(symbol=symbol)
