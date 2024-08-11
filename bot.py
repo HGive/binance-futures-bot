@@ -2,6 +2,7 @@ import os
 from dotenv import load_dotenv
 import ccxt
 import pandas as pd
+import numpy as np
 import logging
 from pytz import timezone
 from datetime import datetime
@@ -51,7 +52,7 @@ interval = 20   # interval 초마다 반복
 leverage = 10
 init_delay_count = 0
 buy_count = 0
-timeframe = '5m'
+timeframe = '1m'
 
 #코드 시작하면 먼저 주문 모두 취소
 exchange.cancel_all_orders(symbol=symbol)
@@ -72,11 +73,11 @@ df = None
 rsi = None
 highest_last_40 = None
 init_delay_count = 0
-mode = None
+is_bull = False
 
 def main() :
 
-    global buy_count, price_precision, amount_precision, pending_buy_order_id, pending_tp_order_id, init_delay_count, balance, avbl, positions, positionAmt, ohlcv, currClose, df, rsi, highest_last_40, init_delay_count
+    global buy_count, price_precision, amount_precision, pending_buy_order_id, pending_tp_order_id, init_delay_count, balance, avbl, positions, positionAmt, ohlcv, currClose, df, rsi, highest_last_40, init_delay_count, is_bull
 
     while True:
         try:
@@ -89,17 +90,15 @@ def main() :
             ohlcv = exchange.fetch_ohlcv(symbol, timeframe, limit=200)
             currClose = ohlcv[-1][4]
             df = pd.DataFrame(ohlcv,columns=['timestamp', 'open', 'high', 'low', 'close', 'volume'])
+            df['ma99'] = df['close'].rolling(window = 99).mean()
+            last_60 = df.tail(60)
+            above_ma99_cnt = np.sum(last_60['close'] > last_60['ma99'] )
+            is_bull = above_ma99_cnt > 51
             rsi = calc_rsi(df,14)
-            # ema_99 = calc_ema(df['close'],window=99)
-            # ema_150 = calc_ema(df['close'],window=150)
-            # highest_last_150 = df['high'].rolling(window=150).max().iloc[-1]
-            # highest_last_40 = df['high'].rolling(window=40).max().iloc[-1]
-            # df['high']와 df['close']의 중간값(평균)을 계산
-            # 40개 윈도우에서 중간값의 최대값을 계산
             middle_value = (df['high'] + df['close']) / 2
             highest_last_40 = middle_value.rolling(window=40).max().iloc[-1]
 
-            if init_delay_count > 8 :
+            if init_delay_count > 4 :
                 exchange.cancel_all_orders(symbol=symbol)
                 pending_buy_order_id, pending_tp_order_id = None, None
                 init_delay_count = 0
@@ -131,7 +130,7 @@ def main() :
                     #첫 매수 체결
                     if buy_count == 0 and pending_buy_order['status'] == 'closed' :
                         #이후 체결 로그 남기기
-                        targetBuyPrice = comm.calc_price(0.98,entryPrice,price_precision)
+                        targetBuyPrice = comm.calc_price(0.985,entryPrice,price_precision)
                         adjusted_amount = comm.calc_amount(avbl, 0.12, leverage, targetBuyPrice, amount_precision)
 
                         buy_order = comm.custom_limit_order(exchange, symbol, "buy", adjusted_amount, targetBuyPrice)
@@ -147,9 +146,9 @@ def main() :
                     elif buy_count == 1 and pending_buy_order['status'] == 'closed':
                         exchange.cancel_all_orders(symbol=symbol)
 
-                        targetBuyPrice = comm.calc_price(0.96,entryPrice,price_precision)
+                        targetBuyPrice = comm.calc_price(0.97,entryPrice,price_precision)
                         adjusted_amount = comm.calc_amount(avbl, 0.8, leverage, targetBuyPrice, amount_precision)
-                        tp_price = comm.calc_price(1.01,entryPrice,price_precision)
+                        tp_price = comm.calc_price(1.006,entryPrice,price_precision)
                         # tp_stopPrice = comm.calc_price(1.01,entryPrice,price_precision)
 
                         buy_order = comm.custom_limit_order(exchange, symbol, "buy", adjusted_amount, targetBuyPrice)
@@ -173,7 +172,7 @@ def main() :
 
                         sl_price = comm.calc_price(0.975 ,entryPrice, price_precision)
                         # sl_stopPrice = comm.calc_price(0.99 ,entryPrice, price_precision)
-                        tp_price = comm.calc_price(1.007,entryPrice,price_precision)
+                        tp_price = comm.calc_price(1.005,entryPrice,price_precision)
                         # tp_stopPrice = comm.calc_price(1.004,entryPrice,price_precision)
 
                         sl_order = comm.custom_tpsl_order(exchange, symbol, "STOP", "sell", positionAmt, sl_price, sl_price)
@@ -202,20 +201,21 @@ def main() :
 
             # #조건판별 후 buy
             init_cond = ( buy_count == 0 and entryPrice == None and pending_buy_order_id == None and
-                        pending_buy_order_id == None and highest_last_40*0.985 >= currClose and rsi <= 40  ) 
+                        pending_buy_order_id == None ) 
+            
+            market_mode = highest_last_40*0.995 >= currClose if is_bull else highest_last_40*0.99 >= currClose and rsi <= 40
                  
             # 최초 매수     
-            if init_cond : 
+            if init_cond and market_mode : 
                 try:
-                    targetBuyPrice = currClose - 1*price_precision
-                    adjusted_amount = comm.calc_amount(avbl, percent = 0.04, leverage = leverage, targetBuyPrice = targetBuyPrice, amount_precision = amount_precision)
-                    tp_price = comm.calc_price(1.01, targetBuyPrice, price_precision)
-                    # tp_stopPrice = comm.calc_price(1.005, targetBuyPrice, price_precision)
+                    adjusted_amount = comm.calc_amount(avbl, percent = 0.04, leverage = leverage, targetBuyPrice = currClose, amount_precision = amount_precision)
+                    tp_price = comm.calc_price(1.006, currClose, price_precision)
+                    # tp_stopPrice = comm.calc_price(1.005, currClose, price_precision)
 
                     exchange.cancel_all_orders(symbol=symbol)
 
                     # buy order
-                    buy_order = comm.custom_limit_order(exchange, symbol, "buy", adjusted_amount, targetBuyPrice)
+                    buy_order = comm.custom_limit_order(exchange, symbol, "buy", adjusted_amount, currClose)
                     if buy_order == None : 
                         time.sleep(interval)
                         continue
