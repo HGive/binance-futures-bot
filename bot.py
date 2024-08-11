@@ -48,7 +48,7 @@ amount_precision = exchange.markets[symbol]['precision']['amount']
 # min_cost = exchange.markets[symbol]['limits']['cost']['min']
 pending_buy_order_id = None
 pending_tp_order_id = None
-interval = 20   # interval 초마다 반복
+interval = 15   # interval 초마다 반복
 leverage = 10
 init_delay_count = 0
 buy_count = 0
@@ -201,12 +201,12 @@ def main() :
 
             # #조건판별 후 buy
             init_cond = ( buy_count == 0 and entryPrice == None and pending_buy_order_id == None and
-                        pending_buy_order_id == None ) 
+                        pending_tp_order_id == None ) 
             
-            market_mode = (highest_last_40*0.995 >= currClose ) if is_bull else (highest_last_40*0.992 >= currClose or rsi <= 35) 
+            market_cond = (highest_last_40*0.995 >= currClose ) if is_bull else (highest_last_40*0.992 >= currClose or rsi <= 36) 
                  
             # 최초 매수     
-            if init_cond and market_mode : 
+            if init_cond and market_cond : 
                 try:
                     adjusted_amount = comm.calc_amount(avbl, percent = 0.04, leverage = leverage, targetBuyPrice = currClose, amount_precision = amount_precision)
                     tp_price = comm.calc_price(1.005, currClose, price_precision)
@@ -233,6 +233,10 @@ def main() :
                 except Exception as e:
                     logging.error(f"Error creating init order: {e}")
 
+            # print("init_cond : ", init_cond)
+            # print("market_cond : ", market_cond)
+            # print("is_bull : ", is_bull)
+            # print("init_cond and market_cond: ", (init_cond and market_cond))
             time.sleep(interval)
         except Exception as e:
             logging.error(f"error occurered: {e}")
