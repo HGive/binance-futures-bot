@@ -72,13 +72,12 @@ currClose = None
 df = None
 rsi = None
 highest_last_40 = None
-last_70 = None
 init_delay_count = 0
 is_bull = False
 
 def main() :
 
-    global buy_count, price_precision, amount_precision, pending_buy_order_id, pending_tp_order_id, init_delay_count, balance, avbl, positions, positionAmt, ohlcv, currClose, df, rsi, highest_last_40, init_delay_count, is_bull, last_70
+    global buy_count, price_precision, amount_precision, pending_buy_order_id, pending_tp_order_id, init_delay_count, balance, avbl, positions, positionAmt, ohlcv, currClose, df, rsi, highest_last_40, init_delay_count, is_bull
 
     while True:
         try:
