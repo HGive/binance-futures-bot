@@ -72,12 +72,13 @@ currClose = None
 df = None
 rsi = None
 highest_last_40 = None
+last_70 = None
 init_delay_count = 0
 is_bull = False
 
 def main() :
 
-    global buy_count, price_precision, amount_precision, pending_buy_order_id, pending_tp_order_id, init_delay_count, balance, avbl, positions, positionAmt, ohlcv, currClose, df, rsi, highest_last_40, init_delay_count, is_bull
+    global buy_count, price_precision, amount_precision, pending_buy_order_id, pending_tp_order_id, init_delay_count, balance, avbl, positions, positionAmt, ohlcv, currClose, df, rsi, highest_last_40, init_delay_count, is_bull, last_70
 
     while True:
         try:
@@ -95,8 +96,7 @@ def main() :
             above_ma99_cnt = np.sum(last_70['close'] > last_70['ma99'] )
             is_bull = above_ma99_cnt > 61
             rsi = calc_rsi(df,14)
-            middle_value = (df['high'] + df['close']) / 2
-            highest_last_40 = middle_value.rolling(window=40).max().iloc[-1]
+            highest_last_40 = ((df['high'] + df['close']) / 2 ).rolling(window=40).max().iloc[-1]
 
             if init_delay_count > 4 :
                 exchange.cancel_all_orders(symbol=symbol)
@@ -227,7 +227,7 @@ def main() :
             init_cond = ( buy_count == 0 and entryPrice == None and pending_buy_order_id == None and
                         pending_tp_order_id == None ) 
             
-            market_cond = (highest_last_40*0.995 >= currClose ) if is_bull else (highest_last_40*0.992 >= currClose or rsi <= 36) 
+            market_cond = (highest_last_40*0.994 >= currClose ) if is_bull else (highest_last_40*0.992 >= currClose or rsi <= 36) 
                  
             # 최초 매수     
             if init_cond and market_cond : 
