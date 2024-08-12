@@ -96,7 +96,8 @@ def main() :
             above_ma99_cnt = np.sum(last_70['close'] > last_70['ma99'] )
             is_bull = above_ma99_cnt > 61
             rsi = calc_rsi(df,14)
-            highest_last_40 = ((df['high'] + df['close']) / 2 ).rolling(window=40).max().iloc[-1]
+            middle_value = (df['high'] + df['close']) / 2
+            highest_last_40 = middle_value.rolling(window=40).max().iloc[-1]
 
             if init_delay_count > 4 :
                 exchange.cancel_all_orders(symbol=symbol)
