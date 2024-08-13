@@ -29,8 +29,9 @@ logging.basicConfig(
 load_dotenv() 
 api_key = os.environ['BINANCE_API_KEY']
 api_secret = os.environ['BINANCE_API_SECRET']
-print(api_key)
-print(api_secret)
+logging.info(f"api_key: {api_key}")
+logging.info(f"api_secret: {api_secret}")
+
 exchange = ccxt.binance(config = {
     'apiKey' : api_key,
     'secret' : api_secret,
