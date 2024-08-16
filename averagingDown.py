@@ -75,6 +75,8 @@ rsi = None
 highest_last_40 = None
 init_delay_count = 0
 is_bull = False
+buy_percent = [0.02, 0.06, 0.3, 0.9]  # 각 매수 퍼센트 (1차, 2차, 3차, 4차 매수)
+price_diffs = [0, -1.5, -5, -7]  # 각 매수 시점에서의 가격 변동 비율
 
 def main() :
 
@@ -131,7 +133,7 @@ def main() :
                     #첫 매수 체결
                     if buy_count == 0 and pending_buy_order['status'] == 'closed' :
                         #이후 체결 로그 남기기
-                        targetBuyPrice = comm.calc_price(0.99,entryPrice,price_precision)
+                        targetBuyPrice = comm.calc_price(0.98,entryPrice,price_precision)
                         adjusted_amount = comm.calc_amount(avbl, 0.06, leverage, targetBuyPrice, amount_precision)
 
                         buy_order = comm.custom_limit_order(exchange, symbol, "buy", adjusted_amount, targetBuyPrice)
@@ -147,7 +149,7 @@ def main() :
                     elif buy_count == 1 and pending_buy_order['status'] == 'closed':
                         exchange.cancel_all_orders(symbol=symbol)
 
-                        targetBuyPrice = comm.calc_price(0.96,entryPrice,price_precision)
+                        targetBuyPrice = comm.calc_price(0.95,entryPrice,price_precision)
                         adjusted_amount = comm.calc_amount(avbl, 0.25, leverage, targetBuyPrice, amount_precision)
                         tp_price = comm.calc_price(1.005,entryPrice,price_precision)
                         # tp_stopPrice = comm.calc_price(1.01,entryPrice,price_precision)
@@ -171,7 +173,7 @@ def main() :
                     elif buy_count == 2 and pending_buy_order['status'] == 'closed':
                         exchange.cancel_all_orders(symbol=symbol)
 
-                        targetBuyPrice = comm.calc_price(0.94,entryPrice,price_precision)
+                        targetBuyPrice = comm.calc_price(0.93,entryPrice,price_precision)
                         adjusted_amount = comm.calc_amount(avbl, 0.9, leverage, targetBuyPrice, amount_precision)
                         tp_price = comm.calc_price(1.005,entryPrice,price_precision)
                         # tp_stopPrice = comm.calc_price(1.01,entryPrice,price_precision)
@@ -191,7 +193,7 @@ def main() :
                         pending_buy_order_id = buy_order['id']
                         pending_tp_order_id = tp_order['id']
 
-                    #네번째 매수 체결
+                    # 매수 체결
                     elif buy_count == 3 and pending_buy_order['status'] == 'closed':
                         exchange.cancel_all_orders(symbol=symbol)
 
@@ -228,12 +230,12 @@ def main() :
             init_cond = ( buy_count == 0 and entryPrice == None and pending_buy_order_id == None and
                         pending_tp_order_id == None ) 
             
-            market_cond = (highest_last_40*0.994 >= currClose ) if is_bull else (highest_last_40*0.992 >= currClose or rsi <= 36) 
+            market_cond = (highest_last_40*0.99 >= currClose ) if is_bull else (highest_last_40*0.985 >= currClose or rsi <= 36) 
                  
             # 최초 매수     
             if init_cond and market_cond : 
                 try:
-                    adjusted_amount = comm.calc_amount(avbl, percent = 0.02, leverage = leverage, targetBuyPrice = currClose, amount_precision = amount_precision)
+                    adjusted_amount = comm.calc_amount(avbl, percent = buy_percent[0], leverage = leverage, targetBuyPrice = currClose, amount_precision = amount_precision)
                     tp_price = comm.calc_price(1.006, currClose, price_precision)
                     # tp_stopPrice = comm.calc_price(1.005, currClose, price_precision)
 
