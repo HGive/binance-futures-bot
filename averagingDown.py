@@ -49,7 +49,7 @@ amount_precision = exchange.markets[symbol]['precision']['amount']
 # min_cost = exchange.markets[symbol]['limits']['cost']['min']
 pending_buy_order_id = None
 pending_tp_order_id = None
-interval = 15   # interval 초마다 반복
+interval = 10   # interval 초마다 반복
 leverage = 10
 init_delay_count = 0
 buy_count = 0
@@ -101,7 +101,7 @@ def main() :
             middle_value = (df['high'] + df['close']) / 2
             highest_last_40 = middle_value.rolling(window=40).max().iloc[-1]
 
-            if init_delay_count > 4 :
+            if init_delay_count > 5 :
                 exchange.cancel_all_orders(symbol=symbol)
                 pending_buy_order_id, pending_tp_order_id = None, None
                 init_delay_count = 0
