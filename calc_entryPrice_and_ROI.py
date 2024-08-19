@@ -9,7 +9,7 @@ def calculate_average_price(avbl, buy_percentages, price_diffs):
 
     for i, (buy_percentage, price_diff) in enumerate(zip(buy_percentages, price_diffs)):
         # 현재 매수 가격 계산 (이전 평단가에서 price_diff만큼 감소)
-        buy_price = average_price * (1 + price_diff / 100)
+        buy_price = average_price * price_diff
         
         # 매수할 금액 계산
         buy_amount = remaining_avbl * buy_percentage
@@ -37,10 +37,18 @@ def calculate_average_price(avbl, buy_percentages, price_diffs):
 
 # 초기 설정
 avbl = 1000  # 초기 자본금
-buy_percent = [0.4, 0.1, 0.3, 0.9]  # 각 매수 퍼센트 (1차, 2차, 3차, 4차 매수)
-price_diffs = [0, -1.5, -5, -7]  # 각 매수 시점에서의 가격 변동 비율
+# buy_percent = [0.02, 0.06, 0.25, 1]  # 각 매수 퍼센트 (1차, 2차, 3차, 4차 매수)
+# price_diffs = [  1, 0.97, 0.94, 0.91]  # 각 매수 시점에서의 가격 변동 비율
 
-print(buy_percent[0])
+buy_percent = [0.02, 0.06, 0.25, 1]  # 각 매수 퍼센트 (1차, 2차, 3차, 4차 매수)
+price_diffs = [1, 0.98, 0.96, 0.94]  # 각 매수 시점에서의 가격 변동 비율
+
+# buy_percent = [0.02, 0.06, 0.25, 1]  # 각 매수 퍼센트 (1차, 2차, 3차, 4차 매수)
+# price_diffs = [1, 0.98, 0.96, 0.94]  # 각 매수 시점에서의 가격 변동 비율
+
+# buy_percent = [0.3, 1, 0.25, 1]  # 각 매수 퍼센트 (1차, 2차, 3차, 4차 매수)
+# price_diffs = [  1, 0.97, 0.96, 0.94]  # 각 매수 시점에서의 가격 변동 비율
+
 
 # 함수 호출
 final_average_price = calculate_average_price(avbl, buy_percent, price_diffs)

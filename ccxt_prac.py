@@ -20,7 +20,8 @@ exchange = ccxt.binance(config = {
     'secret' : api_secret,
     'enableRateLimit' : True,
     'options' : {
-        'defaultType' : 'future'
+        'defaultType' : 'future',
+        'adjustForTimeDifference': True
     }
 })
 
