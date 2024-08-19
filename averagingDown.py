@@ -151,7 +151,7 @@ def main() :
 
                         targetBuyPrice = comm.calc_price(0.95,entryPrice,price_precision)
                         adjusted_amount = comm.calc_amount(avbl, 0.25, leverage, targetBuyPrice, amount_precision)
-                        tp_price = comm.calc_price(1.005,entryPrice,price_precision)
+                        tp_price = comm.calc_price(1.004,entryPrice,price_precision)
                         # tp_stopPrice = comm.calc_price(1.01,entryPrice,price_precision)
 
                         buy_order = comm.custom_limit_order(exchange, symbol, "buy", adjusted_amount, targetBuyPrice)
