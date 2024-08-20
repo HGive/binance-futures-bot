@@ -44,9 +44,9 @@ exchange = ccxt.binance({
 async def main():
 
     # 전역 변수들
-    position = None  # 현재 포지션 상태
+    position_long = True  # 현재 포지션 상태
     symbol = 'CRV/USDC:USDC'
-    timeframe = '30m'
+    timeframe = '1h'
     interval = 5   # interval 초마다 반복
     leverage = 10
     df = None
@@ -78,7 +78,7 @@ async def main():
         D = round(stoch_rsi_df['D'].iloc[-1],2)
 
         # # 롱 포지션 조건: D, K가 20 아래에서 K가 D를 상향 돌파
-        # if buy_count == 0 and K < 20 and D < 20 and  K > D:
+        # if K < 20 and D < 20 and  K > D and rsi < 45:
         #     if position != "long":
         #         # 모든 포지션 정리하고 롱 진입
         #         await exchange.cancel_all_orders(symbol=symbol)

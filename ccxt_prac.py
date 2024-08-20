@@ -12,8 +12,8 @@ load_dotenv()  # read file from local .env
 
 api_key = os.environ['BINANCE_API_KEY']
 api_secret = os.environ['BINANCE_API_SECRET']
-symbol = 'CRV/USDC:USDC'
-timeframe = '1h'
+symbol = 'CHR/USDT:USDT'
+timeframe = '5m'
 
 exchange = ccxt.binance(config = {
     'apiKey' : api_key,
@@ -25,12 +25,10 @@ exchange = ccxt.binance(config = {
     }
 })
 
-ohlcv = exchange.fetch_ohlcv(symbol, timeframe, limit=200)
-currClose = ohlcv[-1][4]
-df= pd.DataFrame(ohlcv,columns=['timestamp', 'open', 'high', 'low', 'close', 'volume'])
-# df['date'] = pd.to_datetime(df['timestamp'], unit='ms').dt.strftime('%Y-%m-%d %H:%M:%S')
-# Stochastic RSI 계산
-df['stoch_k'], df['stoch_d'] = calc_stoch_rsi(df, 14, 3, 3)
-rsi = calc_rsi(df, 14)
-print(df)
-print(currClose)
+positions = exchange.fetch_positions(symbols=[symbol])
+entryPrice = positions[0]['entryPrice'] if len(positions) > 0 else None
+positionAmt = positions[0]['contracts'] if len(positions) > 0 else None  
+
+pprint(positions)
+print(entryPrice)
+print(positionAmt)
