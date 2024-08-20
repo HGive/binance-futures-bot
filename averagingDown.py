@@ -76,7 +76,7 @@ highest_last_40 = None
 init_delay_count = 0
 is_bull = False
 buy_percent = [0.02, 0.06, 0.25, 1]  # 각 매수 퍼센트 (1차, 2차, 3차, 4차 매수)
-price_diffs = [1, 0.98, 0.96, 0.94]  # 각 매수 시점에서의 가격 변동 비율
+price_diffs = [1, 0.97, 0.96, 0.94]  # 각 매수 시점에서의 가격 변동 비율
 
 def main() :
 
@@ -246,13 +246,13 @@ def main() :
             init_cond = ( buy_count == 0 and entryPrice == None and pending_buy_order_id == None and
                         pending_tp_order_id == None ) 
             
-            market_cond = (highest_last_40*0.99 >= currClose ) if is_bull else (highest_last_40*0.985 >= currClose or rsi <= 35) 
+            market_cond = (highest_last_40*0.99 >= currClose ) if is_bull else (highest_last_40*0.98 >= currClose or rsi <= 33) 
                  
             # 최초 매수     
             if init_cond and market_cond : 
                 try:
                     adjusted_amount = comm.calc_amount(avbl, percent = buy_percent[0], leverage = leverage, targetBuyPrice = currClose, amount_precision = amount_precision)
-                    tp_price = comm.calc_price(1.005, currClose, price_precision)
+                    tp_price = comm.calc_price(1.006, currClose, price_precision)
                     # tp_stopPrice = comm.calc_price(1.005, currClose, price_precision)
 
                     exchange.cancel_all_orders(symbol=symbol)
