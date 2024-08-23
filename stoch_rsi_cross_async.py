@@ -101,7 +101,7 @@ async def main():
                     logging.info(f"Entered SHORT_1 position with 30% at price: {current_price}")
 
             elif position_status == "long_1":
-                if K > 80 and D > 80 and K < D :
+                if K > 80 and D > 80 and K < D and rsi >= 55 :
                     # 롱 포지션 청산 및 숏 전환
                     await exchange.create_market_sell_order(symbol, position_amount)
                     await asyncio.sleep(2)
