@@ -8,6 +8,7 @@ from datetime import datetime
 from pytz import timezone
 from module_rsi import calc_rsi
 from module_stochrsi import calc_stoch_rsi
+from module_ema import calc_ema
 
 # 로깅 설정
 def timetz(*args):
@@ -101,7 +102,7 @@ async def main():
                     logging.info(f"Entered SHORT_1 position with 30% at price: {current_price}")
 
             elif position_status == "long_1":
-                if K > 80 and D > 80 and K < D and rsi >= 55 :
+                if K > 80 and D > 80 and K < D :
                     # 롱 포지션 청산 및 숏 전환
                     await exchange.create_market_sell_order(symbol, position_amount)
                     await asyncio.sleep(2)
@@ -132,34 +133,34 @@ async def main():
                     position_status = "full_short"
                     logging.info(f"Added to SHORT position (full) at price: {current_price}")
 
-            elif position_status in ["full_long", "full_short"]:
-                if position_status == "full_long" and current_price <= entry_price * 0.98:
-                    if rsi <= 20 and K < 20 and D < 20:
-                        # 롱 포지션 청산 후 숏 전환 (잔고의 30%)
-                        await exchange.create_market_sell_order(symbol, position_amount)
-                        amount = (avbl * 0.3 * leverage) / current_price
-                        await exchange.create_market_sell_order(symbol, amount)
-                        position_status = "short"
-                        logging.info(f"Closed FULL LONG and entered SHORT with 30% at price: {current_price}")
-                    else:
-                        # 롱 포지션 청산
-                        await exchange.create_market_sell_order(symbol, position_amount)
-                        position_status = "none"
-                        logging.info(f"Closed FULL LONG position at price: {current_price}")
+            # elif position_status in ["full_long", "full_short"]:
+            #     if position_status == "full_long" and current_price <= entry_price * 0.98:
+            #         if rsi <= 20 and K < 20 and D < 20:
+            #             # 롱 포지션 청산 후 숏 전환 (잔고의 30%)
+            #             await exchange.create_market_sell_order(symbol, position_amount)
+            #             amount = (avbl * 0.3 * leverage) / current_price
+            #             await exchange.create_market_sell_order(symbol, amount)
+            #             position_status = "short"
+            #             logging.info(f"Closed FULL LONG and entered SHORT with 30% at price: {current_price}")
+            #         else:
+            #             # 롱 포지션 청산
+            #             await exchange.create_market_sell_order(symbol, position_amount)
+            #             position_status = "none"
+            #             logging.info(f"Closed FULL LONG position at price: {current_price}")
 
-                elif position_status == "full_short" and current_price >= entry_price * 1.02:
-                    if rsi >= 80 and K > 80 and D > 80:
-                        # 숏 포지션 청산 후 롱 전환 (잔고의 30%)
-                        await exchange.create_market_buy_order(symbol, position_amount)
-                        amount = (avbl * 0.3 * leverage) / current_price
-                        await exchange.create_market_buy_order(symbol, amount)
-                        position_status = "long"
-                        logging.info(f"Closed FULL SHORT and entered LONG with 30% at price: {current_price}")
-                    else:
-                        # 숏 포지션 청산
-                        await exchange.create_market_buy_order(symbol, position_amount)
-                        position_status = "none"
-                        logging.info(f"Closed FULL SHORT position at price: {current_price}")
+            #     elif position_status == "full_short" and current_price >= entry_price * 1.02:
+            #         if rsi >= 80 and K > 80 and D > 80:
+            #             # 숏 포지션 청산 후 롱 전환 (잔고의 30%)
+            #             await exchange.create_market_buy_order(symbol, position_amount)
+            #             amount = (avbl * 0.3 * leverage) / current_price
+            #             await exchange.create_market_buy_order(symbol, amount)
+            #             position_status = "long"
+            #             logging.info(f"Closed FULL SHORT and entered LONG with 30% at price: {current_price}")
+            #         else:
+            #             # 숏 포지션 청산
+            #             await exchange.create_market_buy_order(symbol, position_amount)
+            #             position_status = "none"
+            #             logging.info(f"Closed FULL SHORT position at price: {current_price}")
 
 
         except Exception as e:

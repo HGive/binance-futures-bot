@@ -17,7 +17,7 @@ def timetz(*args):
 tz = timezone('Asia/Seoul') # UTC, Asia/Shanghai, Europe/Berlin
 logging.Formatter.converter = timetz
 logging.basicConfig(
-    filename='bot.log',
+    filename='averaging_down.log',
     format="%(asctime)s %(levelname)s: %(message)s",
     level=logging.INFO,
     datefmt="%Y-%m-%d %H:%M:%S",
