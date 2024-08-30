@@ -44,7 +44,6 @@ exchange = ccxt.binance({
 async def main():
 
     # 전역 변수들
-    position_status = "none"  # 현재 포지션 상태 (none, long, full_long, short, full_short)
     symbol = 'CHR/USDT:USDT'
     timeframe = '5m'
     interval = 15   # interval 초마다 반복
@@ -111,7 +110,7 @@ async def main():
                     pending_buy_order_id, pending_tp_order_id = None, None
                     logging.info("---------------   take profit !! ---------------")
 
-            #buy_order 체결되었는지 체크
+            #buy_order 체결 체크
             if pending_buy_order_id != None: 
   
                 pending_buy_order = await exchange.fetch_order(pending_buy_order_id, symbol)
@@ -119,12 +118,11 @@ async def main():
                 if buy_count == 0 and pending_buy_order['status'] == 'open' :
                     init_delay_count += 1
                     logging.info(f'----- init_delay_count : {init_delay_count} -----')
-                    asyncio.sleep(interval)
+                    await asyncio.sleep(interval)
                     continue
                 
                 #첫 매수 체결
                 if buy_count == 0 and pending_buy_order['status'] == 'closed' :
-                    #이후 체결 로그 남기기
                     targetBuyPrice = price_diffs[1]*entry_price
                     adjusted_amount = avbl*buy_percent[1]*leverage/targetBuyPrice
 
@@ -140,8 +138,7 @@ async def main():
 
                     targetBuyPrice = price_diffs[2]*entry_price
                     adjusted_amount = avbl*buy_percent[2]*leverage/targetBuyPrice
-                    tp_price = 1.01*entry_price
-                    # tp_stopPrice = comm.calc_price(1.01,entryPrice,price_precision)
+                    tp_price = 1.015*entry_price
 
                     buy_order = await exchange.create_order(symbol,"LIMIT","buy",adjusted_amount,targetBuyPrice)
                     
@@ -157,8 +154,7 @@ async def main():
 
                     targetBuyPrice = price_diffs[3]*entry_price
                     adjusted_amount = avbl*buy_percent[3]*leverage/targetBuyPrice
-                    tp_price = 1.02*entry_price
-                    # tp_stopPrice = comm.calc_price(1.01,entryPrice,price_precision)
+                    tp_price = 1.005*entry_price
 
                     buy_order = await exchange.create_order(symbol,"LIMIT","buy",adjusted_amount,targetBuyPrice)
                     
@@ -173,9 +169,7 @@ async def main():
                     await exchange.cancel_all_orders(symbol=symbol)
 
                     sl_price = 0.97*entry_price
-                    # sl_stopPrice = comm.calc_price(0.99 ,entryPrice, price_precision)
-                    tp_price = 1.01*entry_price
-                    # tp_stopPrice = comm.calc_price(1.004,entryPrice,price_precision)
+                    tp_price = 1.005*entry_price
 
                     sl_order = await exchange.create_order(symbol,"stop","sell",position_amount,sl_price)
                     
@@ -198,23 +192,26 @@ async def main():
                 market_cond = (highest_last_40*0.99 >= current_price ) if is_bull else (highest_last_40*0.98 >= current_price or rsi <= 33)     
 
                 if init_cond and market_cond :
-                    adjusted_amount = avbl*buy_percent[0]*leverage/current_price
-                    tp_price = 1.01*current_price
-                    # tp_stopPrice = comm.calc_price(1.005, currClose, price_precision)
+                    
+                    adjusted_amount = avbl*0.04*leverage/current_price if is_bull else avbl*buy_percent[0]*leverage/current_price
+                    tp_price = 1.02*current_price if is_bull else 1.01*current_price
 
                     await exchange.cancel_all_orders(symbol=symbol)
 
                     # buy order
                     buy_order = await exchange.create_order(symbol,"LIMIT","buy",adjusted_amount,current_price)
+                    logging.info("")
 
                     # tp order
                     tp_order = await exchange.create_order(symbol,"TAKE_PROFIT","sell",adjusted_amount,tp_price, params={'stopPrice': tp_price})
                     
                     pending_buy_order_id = buy_order['id']
                     pending_tp_order_id = tp_order['id']
+
+                print("----------loop----------")
                 await asyncio.sleep(interval)        
         except Exception as e:
-                logging.error(f"An error occurred: {str(e)}")
+                logging.error(f"An error occurred: {e}")
                 await asyncio.sleep(interval)
 
         

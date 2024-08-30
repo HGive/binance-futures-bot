@@ -45,7 +45,6 @@ exchange = ccxt.binance({
 async def main():
 
     # 전역 변수들
-    position_status = "none"  # 현재 포지션 상태 (none, long, full_long, short, full_short)
     symbol = 'CRV/USDC:USDC'
     timeframe = '1h'
     interval = 40   # interval 초마다 반복
@@ -53,6 +52,9 @@ async def main():
     df = None
     entry_price = 0
     position_amount = 0
+    pending_buy_order_id = None
+    pending_tp_order_id = None
+    buy_count = 0
     avbl_25per = 0.25
     
     # 거래소 초기화
@@ -60,6 +62,7 @@ async def main():
     await exchange.cancel_all_orders(symbol=symbol)
     await exchange.set_leverage(leverage, symbol)
     await exchange.set_margin_mode('isolated', symbol)
+
     price_precision = exchange.markets[symbol]['precision']['price']
     amount_precision = exchange.markets[symbol]['precision']['amount']
     logging.info("***************  Stoch RSI Cross Strategy has started!! ***************")
@@ -82,6 +85,7 @@ async def main():
 
             # 포지션 정보 가져오기
             positions = await exchange.fetch_positions(symbols=[symbol])
+            
             if positions :
                 entry_price = positions[0]['entryPrice']
                 position_amount = positions[0]['contracts']
