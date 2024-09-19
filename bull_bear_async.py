@@ -102,16 +102,6 @@ async def main():
                 continue
 
             # 주문 상태 확인 및 처리
-            if pending_order_id:
-                order = await exchange.fetch_order(pending_order_id, symbol)
-                if order['status'] == 'open':
-                    init_delay_count += 1
-                    logging.info(f'----- init_delay_count : {init_delay_count} -----')
-                elif order['status'] == 'closed':
-                    init_delay_count = 0
-                    pending_order_id = None
-                    logging.info(f"Order executed: {order['side']} {order['amount']} at {order['price']}")
-
             if pending_tp_order_id:
                 tp_order = await exchange.fetch_order(pending_tp_order_id, symbol)
                 if tp_order['status'] == 'closed':
@@ -126,15 +116,25 @@ async def main():
                     await exchange.cancel_all_orders(symbol=symbol)
                     pending_order_id = pending_tp_order_id = pending_sl_order_id = None
 
+            if pending_order_id:
+                order = await exchange.fetch_order(pending_order_id, symbol)
+                if order['status'] == 'open':
+                    init_delay_count += 1
+                    logging.info(f'----- init_delay_count : {init_delay_count} -----')
+                elif order['status'] == 'closed':
+                    init_delay_count = 0
+                    pending_order_id = None
+                    logging.info(f"Order executed: {order['side']} {order['amount']} at {order['price']}")
+            
             #### 주문 로직
             if not pending_order_id and not position_amount:
                 if is_bull and current_price <= highest_last_30 * 0.98:
                     # Bull 상태에서 롱 진입
                     order = await exchange.create_order(symbol,"LIMIT","buy", amount, current_price)
-                    tp_price = current_price * 1.03
-                    sl_price = current_price * 0.985
-                    tp_order = await exchange.create_order(symbol, "TAKE_PROFIT", "sell" , amount, tp_order ,params={'stopPrice': tp_price})
-                    sl_order = await exchange.create_order(symbol, "STOP", "buy" , amount, sl_price ,params={'stopPrice': sl_price})
+                    tp_price = current_price * 1.04
+                    sl_price = current_price * 0.98
+                    tp_order = await exchange.create_order(symbol, "TAKE_PROFIT", "sell" , amount, tp_price ,params={'stopPrice': tp_price})
+                    sl_order = await exchange.create_order(symbol, "STOP", "sell" , amount, sl_price ,params={'stopPrice': sl_price})
                     pending_order_id = order['id']
                     pending_tp_order_id = tp_order['id']
                     pending_sl_order_id = sl_order['id']
@@ -142,38 +142,46 @@ async def main():
                 elif is_bear and current_price >= lowest_last_30 * 1.02:
                     # Bear 상태에서 숏 진입
                     order = await exchange.create_order(symbol,"LIMIT","sell", amount, current_price)
-                    tp_price = current_price * 0.97
-                    sl_price = current_price * 1.015
-                    tp_order = await exchange.create_order(symbol, "TAKE_PROFIT", "sell" , amount, tp_order ,params={'stopPrice': tp_price})
+                    tp_price = current_price * 0.96
+                    sl_price = current_price * 1.02
+                    tp_order = await exchange.create_order(symbol, "TAKE_PROFIT", "buy" , amount, tp_price ,params={'stopPrice': tp_price})
                     sl_order = await exchange.create_order(symbol, "STOP", "buy" , amount, sl_price ,params={'stopPrice': sl_price})
                     pending_order_id = order['id']
                     pending_tp_order_id = tp_order['id']
                     pending_sl_order_id = sl_order['id']
                     logging.info(f"Entered SHORT position: {amount} at {current_price}")
-                elif rsi < 35:
+                elif rsi < 35 and current_price >= lowest_last_30 * 1.002 :
                     # RSI 35 미만에서 롱 진입
                     order = await exchange.create_order(symbol,"LIMIT","buy", amount, current_price)
-                    tp_price = current_price * 1.02
-                    sl_price = current_price * 0.99
-                    tp_order = await exchange.create_order(symbol, "TAKE_PROFIT", "sell" , amount, tp_order ,params={'stopPrice': tp_price})
-                    sl_order = await exchange.create_order(symbol, "STOP", "buy" , amount, sl_price ,params={'stopPrice': sl_price})
+                    tp_price = current_price * 1.03
+                    sl_price = current_price * 0.98
+                    tp_order = await exchange.create_order(symbol, "TAKE_PROFIT", "sell" , amount, tp_price ,params={'stopPrice': tp_price})
+                    sl_order = await exchange.create_order(symbol, "STOP", "sell" , amount, sl_price ,params={'stopPrice': sl_price})
                     pending_order_id = order['id']
                     pending_tp_order_id = tp_order['id']
                     pending_sl_order_id = sl_order['id']
                     logging.info(f"Entered LONG position (RSI): {amount} at {current_price}")
-                elif rsi > 65:
+                elif rsi > 65 and current_price <= highest_last_30 * 0.998 :
                     # RSI 65 초과에서 숏 진입
                     order = await exchange.create_order(symbol,"LIMIT","sell", amount, current_price)
-                    tp_price = current_price * 0.98
-                    sl_price = current_price * 1.01
-                    tp_order = await exchange.create_order(symbol, "TAKE_PROFIT", "sell" , amount, tp_order ,params={'stopPrice': tp_price})
+                    tp_price = current_price * 0.97
+                    sl_price = current_price * 1.02
+                    tp_order = await exchange.create_order(symbol, "TAKE_PROFIT", "buy" , amount, tp_price ,params={'stopPrice': tp_price})
                     sl_order = await exchange.create_order(symbol, "STOP", "buy" , amount, sl_price ,params={'stopPrice': sl_price})
                     pending_order_id = order['id']
                     pending_tp_order_id = tp_order['id']
                     pending_sl_order_id = sl_order['id']
                     logging.info(f"Entered SHORT position (RSI): {amount} at {current_price}")
 
-            logging.info(f"Current price: {current_price}, RSI: {rsi}, Bull: {is_bull}, Bear: {is_bear}")
+            print('pending_order_id : ', pending_order_id)
+            print('pending_order_id : ', pending_tp_order_id)
+            print('avbl : ', avbl)
+            print('current_price : ', current_price)
+            print('position_amount : ', position_amount)
+            print('amount : ', amount)
+            print('0.3avbl : ', avbl*0.3)
+            print('cal_cost : ', amount * current_price / leverage)
+            print('cost : ', amount * current_price)
             await asyncio.sleep(interval)
 
         except Exception as e:
