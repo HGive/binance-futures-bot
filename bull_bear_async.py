@@ -173,15 +173,15 @@ async def main():
                     pending_sl_order_id = sl_order['id']
                     logging.info(f"Entered SHORT position (RSI): {amount} at {current_price}")
 
-            print('pending_order_id : ', pending_order_id)
-            print('pending_order_id : ', pending_tp_order_id)
-            print('avbl : ', avbl)
-            print('current_price : ', current_price)
-            print('position_amount : ', position_amount)
-            print('amount : ', amount)
-            print('0.3avbl : ', avbl*0.3)
-            print('cal_cost : ', amount * current_price / leverage)
-            print('cost : ', amount * current_price)
+            # print('pending_order_id : ', pending_order_id)
+            # print('pending_order_id : ', pending_tp_order_id)
+            # print('avbl : ', avbl)
+            # print('current_price : ', current_price)
+            # print('position_amount : ', position_amount)
+            # print('amount : ', amount)
+            # print('0.3avbl : ', avbl*0.3)
+            # print('cal_cost : ', amount * current_price / leverage)
+            # print('cost : ', amount * current_price)
             await asyncio.sleep(interval)
 
         except Exception as e:
