@@ -46,6 +46,7 @@ async def main():
     interval = 20  # interval 초마다 반복
     leverage = 5
     df = None
+
     entry_price = 0
     position_amount = 0
     pending_tp_order_id = None
@@ -84,8 +85,9 @@ async def main():
                 )
 
                 if pending_tp_order["status"] == "closed":
-                    buy_count = 0
                     await exchange.cancel_all_orders(symbol=symbol)
+                    buy_count = 0
+                    entry_price = 0
                     pending_tp_order_id = None
                     logging.info("---------------   take profit !! ---------------")
 
@@ -95,7 +97,7 @@ async def main():
                 position_amount = positions[0]["contracts"]
 
                 # 두번째 매수
-                if buy_count == 2:
+                if buy_count == 2 and not pending_tp_order_id:
                     await exchange.cancel_all_orders(symbol=symbol)
 
                     tp_price = 1.03 * entry_price
@@ -110,7 +112,7 @@ async def main():
                     pending_tp_order_id = tp_order["id"]
 
             # buy 로직
-            if buy_count == 0 and entry_price == None and rsi < 29:
+            if buy_count == 0 and not entry_price and rsi < 29:
                 adjusted_amount = avbl * 0.2 * leverage / current_price
                 tp_price = 1.03 * current_price
 
@@ -132,13 +134,18 @@ async def main():
 
                 pending_tp_order_id = tp_order["id"]
                 buy_count = 1
+
             elif buy_count == 1 and entry_price and rsi < 19:
+                await exchange.cancel_all_orders(symbol=symbol)
+
                 adjusted_amount = avbl * 1 * leverage / current_price
                 buy_order = await exchange.create_order(
                     symbol, "market", "buy", adjusted_amount, current_price
                 )
+                pending_tp_order_id = None
                 buy_count = 2
                 # print("----------loop----------")
+
             await asyncio.sleep(interval)
         except Exception as e:
             logging.error(f"An error occurred: {e}")
