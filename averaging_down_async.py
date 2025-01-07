@@ -139,7 +139,7 @@ async def main():
                     pending_sl_order_id = sl_order["id"]
 
             # buy 로직
-            if buy_count == 0 and not entry_price and rsi < 26 :
+            if buy_count == 0 and not entry_price and rsi < 30 :
                 adjusted_amount = avbl * 0.2 * leverage / current_price
                 tp_price = 1.03 * current_price
                 
@@ -162,7 +162,7 @@ async def main():
                 pending_tp_order_id = tp_order["id"]
                 buy_count = 1
 
-            elif buy_count == 1 and entry_price and ( rsi < 16 or entry_price * 0.93 >= current_price ) :
+            elif buy_count == 1 and entry_price and (rsi < 20 or ( rsi < 25 and entry_price * 0.93 >= current_price )) :
                 await exchange.cancel_all_orders(symbol=symbol)
 
                 adjusted_amount = avbl * 1 * leverage / current_price
