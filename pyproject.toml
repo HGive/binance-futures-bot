@@ -1,0 +1,20 @@
+[tool.poetry]
+name = "binance-future-bot"
+version = "0.1.0"
+description = ""
+authors = ["algorijun <123007169+HGive@users.noreply.github.com>"]
+readme = "README.md"
+
+[tool.poetry.dependencies]
+python = "^3.11"
+python-dotenv = "^1.0.1"
+pandas = "^2.2.3"
+pandas-ta = "^0.3.14b0"
+numpy = "^1.23.5"
+jupyter = "^1.0.0"
+ccxt = "^4.2.71"
+requests = "^2.31.0"
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"

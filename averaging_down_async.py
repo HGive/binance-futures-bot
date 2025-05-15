@@ -43,7 +43,7 @@ async def main():
     # 전역 변수들
     symbol = "CHR/USDT:USDT"
     timeframe = "15m"
-    interval = 20  # interval 초마다 반복
+    interval = 30  # interval 초마다 반복
     leverage = 5
     df = None
 
@@ -175,7 +175,7 @@ async def main():
 
             await asyncio.sleep(interval)
         except Exception as e:
-            logging.error(f"An error occurred: {e}")
+            logging.error(f"An error occurred:{type(e).__name__}: {e}")
             await asyncio.sleep(interval)
 
 
