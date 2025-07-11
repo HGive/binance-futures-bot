@@ -7,7 +7,13 @@ from datetime import datetime
 tz = timezone("Asia/Seoul")
 def timetz(*args): return datetime.now(tz).timetuple()
 logging.Formatter.converter = timetz
-logging.basicConfig(filename="hour_3p_strategy.log", format="%(asctime)s %(levelname)s: %(message)s", level=logging.INFO, datefmt="%Y-%m-%d %H:%M:%S")
+logging.basicConfig(
+    filename="hour_3p_strategy.log",
+    format="%(asctime)s %(levelname)s: %(message)s",
+    level=logging.INFO,
+    datefmt="%Y-%m-%d %H:%M:%S",
+    encoding="utf-8"  # 한글 로그 깨짐 방지
+)
 
 load_dotenv()
 # exchange = None
