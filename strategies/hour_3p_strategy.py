@@ -20,7 +20,7 @@ class Hour3PStrategy:
     async def run_once(self):
         try:
             balance = await self.exchange.fetch_balance()
-            print(balance)
+            # print(balance)
             avbl = balance["USDT"]["free"]
 
             ohlcv = await self.exchange.fetch_ohlcv(self.symbol, timeframe=self.timeframe, limit=200)
@@ -76,8 +76,8 @@ class Hour3PStrategy:
                 )
                 
                 tp_order = await self.exchange.create_order(
-                    self.symbol, "TAKE_PROFIT", "sell",
-                    adjusted_amount, tp_price, params={"stopPrice": tp_price}
+                    self.symbol, "TAKE_PROFIT_MARKET", "sell",
+                    adjusted_amount, None, params={"stopPrice": tp_price}
                 )
                 
                 self.pending_tp_order_id = tp_order["id"]
@@ -94,8 +94,8 @@ class Hour3PStrategy:
                 )
                 
                 tp_order = await self.exchange.create_order(
-                    self.symbol, "TAKE_PROFIT", "buy",
-                    adjusted_amount, tp_price, params={"stopPrice": tp_price}
+                    self.symbol, "TAKE_PROFIT_MARKET", "buy",
+                    adjusted_amount, None, params={"stopPrice": tp_price}
                 )
                 
                 self.pending_tp_order_id = tp_order["id"]
