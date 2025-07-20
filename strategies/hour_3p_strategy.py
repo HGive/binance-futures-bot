@@ -21,9 +21,9 @@ class Hour3PStrategy:
     async def run_once(self):
         try:
             logging.info(f"symbol: {self.symbol}. run_once start")
-            usdt_balance = await self.exchange.fetch_balance()["USDT"]
-            total_balance = usdt_balance["total"]
-            avbl = usdt_balance["free"]
+            balance = await self.exchange.fetch_balance()
+            total_balance = balance["USDT"]["total"]
+            avbl = balance["USDT"]["free"]
             buy_unit = self.calc_buy_unit(total_balance)
             if avbl < buy_unit:
                 logging.info(f"not enough minerals.")
