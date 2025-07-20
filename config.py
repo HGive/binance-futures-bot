@@ -7,8 +7,16 @@ from datetime import datetime
 tz = timezone("Asia/Seoul")
 def timetz(*args): return datetime.now(tz).timetuple()
 logging.Formatter.converter = timetz
+
+# 로그 디렉토리 생성
+os.makedirs("logs", exist_ok=True)
+
+# 환경변수에서 로그 파일명 가져오기 (기본값: hour_3p_strategy.log)
+log_filename = os.environ.get("LOG_FILENAME", "hour_3p_strategy.log")
+log_path = os.path.join("logs", log_filename)
+
 logging.basicConfig(
-    filename="hour_3p_strategy.log",
+    filename=log_path,
     format="%(asctime)s %(levelname)s: %(message)s",
     level=logging.INFO,
     datefmt="%Y-%m-%d %H:%M:%S",

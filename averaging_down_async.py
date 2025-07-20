@@ -6,7 +6,7 @@ import asyncio
 from dotenv import load_dotenv
 from datetime import datetime
 from pytz import timezone
-from module_rsi import calc_rsi
+from modules.module_rsi import calc_rsi
 
 
 # 로깅 설정

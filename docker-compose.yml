@@ -1,21 +1,41 @@
 version: '3.8'
 
 services:
-  binance-bot:
+  strategy1:
     build: .
-    container_name: binance-futures-bot
+    container_name: binance-strategy1
     restart: unless-stopped
     environment:
       - TZ=Asia/Seoul
+      - LOG_FILENAME=strategy.log
     volumes:
-      # 로그 파일을 호스트와 공유
+      # 프로젝트 전체 마운트
+      - .:/app
+      # 로그 디렉토리
       - ./logs:/app/logs
-      # 환경변수 파일 (선택사항)
-      - ./.env:/app/.env
     env_file:
       - .env
+    command: ["/app/.venv/bin/python3", "main.py"]
     networks:
       - bot-network
+
+  # strategy2:
+  #   build: .
+  #   container_name: binance-strategy2
+  #   restart: unless-stopped
+  #   environment:
+  #     - TZ=Asia/Seoul
+  #     - LOG_FILENAME=strategy2.log
+  #   volumes:
+  #     # 프로젝트 전체 마운트
+  #     - .:/app
+  #     # 로그 디렉토리
+  #     - ./logs:/app/logs
+  #   env_file:
+  #     - .env
+  #   command: ["/app/.venv/bin/python3", "main2.py"]
+  #   networks:
+  #     - bot-network
 
 networks:
   bot-network:
