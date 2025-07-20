@@ -2,12 +2,32 @@ version: '3.8'
 
 services:
   strategy1:
-    build: .
+    image: python:3.12-slim
     container_name: binance-strategy1
     restart: unless-stopped
     environment:
       - TZ=Asia/Seoul
-      - LOG_FILENAME=strategy.log
+      - LOG_FILENAME=strategy1.log
+    volumes:
+      # 프로젝트 전체 마운트 (현재 디렉토리의 .venv 포함)
+      - .:/app
+      # 로그 디렉토리
+      - ./logs:/app/logs
+    env_file:
+      - .env
+    working_dir: /app
+    # 현재 디렉토리의 .venv/bin/python 사용
+    command: ["/app/.venv/bin/python3", "main.py"]
+    networks:
+      - bot-network
+
+  strategy2:
+    image: python:3.12-slim
+    container_name: binance-strategy2
+    restart: unless-stopped
+    environment:
+      - TZ=Asia/Seoul
+      - LOG_FILENAME=strategy2.log
     volumes:
       # 프로젝트 전체 마운트
       - .:/app
@@ -15,27 +35,10 @@ services:
       - ./logs:/app/logs
     env_file:
       - .env
-    command: ["/app/.venv/bin/python3", "main.py"]
+    working_dir: /app
+    command: ["/app/.venv/bin/python3", "main2.py"]
     networks:
       - bot-network
-
-  # strategy2:
-  #   build: .
-  #   container_name: binance-strategy2
-  #   restart: unless-stopped
-  #   environment:
-  #     - TZ=Asia/Seoul
-  #     - LOG_FILENAME=strategy2.log
-  #   volumes:
-  #     # 프로젝트 전체 마운트
-  #     - .:/app
-  #     # 로그 디렉토리
-  #     - ./logs:/app/logs
-  #   env_file:
-  #     - .env
-  #   command: ["/app/.venv/bin/python3", "main2.py"]
-  #   networks:
-  #     - bot-network
 
 networks:
   bot-network:
