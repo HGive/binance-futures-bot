@@ -21,9 +21,9 @@ class Hour3PStrategy:
     async def run_once(self):
         try:
             logging.info(f"symbol: {self.symbol}. run_once start")
-            balance = await self.exchange.fetch_balance()
-            total_balance = balance["USDT"]["total"]
-            avbl = balance["USDT"]["free"]
+            usdt_balance = await self.exchange.fetch_balance()["USDT"]
+            total_balance = usdt_balance["total"]
+            avbl = usdt_balance["free"]
             buy_unit = self.calc_buy_unit(total_balance)
             if avbl < buy_unit:
                 logging.info(f"not enough minerals.")
@@ -48,8 +48,9 @@ class Hour3PStrategy:
 
             if positions and len(positions) > 0 and positions[0]["contracts"] > 0:
                 print(positions)
+                logging.info(f"{positions}")
                 return
-
+            
             # 롱/숏 진입 조건 설정
             should_long = False
             should_short = False
@@ -71,56 +72,16 @@ class Hour3PStrategy:
                 adjusted_amount = buy_unit * self.leverage / current_price
                 tp_price = current_price * 1.03
                 await self.exchange.cancel_all_orders(symbol=self.symbol)
-                try:
-                    buy_order = await self.exchange.create_order(self.symbol, "market", "buy", adjusted_amount, current_price)
-                    if buy_order['status'] != 'open' and buy_order['status'] != 'closed':
-                        logging.error(f"[{self.symbol}] buy 주문 실패 - 상태: {buy_order['status']}")
-                        return
-                    logging.info(f"[{self.symbol}] buy 주문 성공")
-                except Exception as e:
-                    logging.error(f"[{self.symbol}] buy 주문 에러: {type(e).__name__}: {e}")
-                    return
-                try:
-                    tp_order = await self.exchange.create_order(
-                        self.symbol, "TAKE_PROFIT_MARKET", "sell",
-                        adjusted_amount, None, params={"stopPrice": tp_price}
-                    )
-                    if tp_order['status'] != 'open' and tp_order['status'] != 'closed':
-                        logging.error(f"[{self.symbol}] sell TP 주문 실패 - 상태: {tp_order['status']}")
-                        return
-                    logging.info(f"[{self.symbol}] sell TP 주문 성공")
-                    self.pending_tp_order_id = tp_order["id"]
-                except Exception as e:
-                    logging.error(f"[{self.symbol}] sell TP 주문 에러: {type(e).__name__}: {e}")
-                    return
+                await self.custom_entry_order(self.symbol, "market", "buy", adjusted_amount, current_price)
+                await self.custom_tp_order(self.symbol, "TAKE_PROFIT_MARKET", "sell", adjusted_amount, tp_price)
 
             # 숏 포지션 진입
             elif should_short:
                 adjusted_amount = buy_unit * self.leverage / current_price
                 tp_price = current_price * 0.97
                 await self.exchange.cancel_all_orders(symbol=self.symbol)
-                try:
-                    sell_order = await self.exchange.create_order(self.symbol, "market", "sell", adjusted_amount, current_price)
-                    if sell_order['status'] != 'open' and sell_order['status'] != 'closed':
-                        logging.error(f"[{self.symbol}] sell 주문 실패 - 상태: {sell_order['status']}")
-                        return
-                    logging.info(f"[{self.symbol}] sell 주문 성공")
-                except Exception as e:
-                    logging.error(f"[{self.symbol}] sell 주문 에러: {type(e).__name__}: {e}")
-                    return
-                try:
-                    tp_order = await self.exchange.create_order(
-                        self.symbol, "TAKE_PROFIT_MARKET", "buy",
-                        adjusted_amount, None, params={"stopPrice": tp_price}
-                    )
-                    if tp_order['status'] != 'open' and tp_order['status'] != 'closed':
-                        logging.error(f"[{self.symbol}] buy TP 주문 실패 - 상태: {tp_order['status']}")
-                        return
-                    logging.info(f"[{self.symbol}] buy TP 주문 성공")
-                    self.pending_tp_order_id = tp_order["id"]
-                except Exception as e:
-                    logging.error(f"[{self.symbol}] buy TP 주문 에러: {type(e).__name__}: {e}")
-                    return
+                await self.custom_entry_order(self.symbol, "market", "sell", adjusted_amount, current_price)
+                await self.custom_tp_order(self.symbol, "TAKE_PROFIT_MARKET", "buy", adjusted_amount, tp_price)
 
         except Exception as e:
             await self.exchange.cancel_all_orders(symbol=self.symbol)
@@ -131,3 +92,26 @@ class Hour3PStrategy:
         base_amount = total_balance / 10
         buy_unit = math.floor(base_amount / 5) * 5
         return buy_unit
+    
+    async def custom_entry_order(self,symbol,order_type,side,amount,price):
+        try:
+            buy_order = await self.exchange.create_order(symbol, order_type, side, amount, price)
+            if buy_order['status'] != 'open' and buy_order['status'] != 'closed':
+                logging.error(f"[{symbol}] buy 주문 실패 - 상태: {buy_order['status']}")
+                return
+            logging.info(f"[{symbol}] buy 주문 성공")
+        except Exception as e:
+            logging.error(f"[{symbol}] buy 주문 에러: {type(e).__name__}: {e}")
+            return
+        
+    async def custom_tp_order(self,symbol,order_type,side,amount,tp_price,):
+        try:
+            tp_order = await self.exchange.create_order(symbol, order_type, side, amount, None, params={"stopPrice": tp_price})
+            if tp_order['status'] != 'open' and tp_order['status'] != 'closed':
+                logging.error(f"[{symbol}] sell TP 주문 실패 - 상태: {tp_order['status']}")
+                return
+            logging.info(f"[{symbol}] sell TP 주문 성공")
+            self.pending_tp_order_id = tp_order["id"]
+        except Exception as e:
+            logging.error(f"[{symbol}] sell TP 주문 에러: {type(e).__name__}: {e}")
+            return
