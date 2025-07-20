@@ -1,45 +1,23 @@
-version: '3.8'
+version: "3.8"
 
 services:
   strategy1:
-    image: python:3.12-slim
+    build:
+      context: .            # 현재 디렉토리의 Dockerfile 사용해서 빌드
     container_name: binance-strategy1
     restart: unless-stopped
     environment:
       - TZ=Asia/Seoul
       - LOG_FILENAME=strategy1.log
-    volumes:
-      # 프로젝트 전체 마운트 (현재 디렉토리의 .venv 포함)
-      - .:/app
-      # 로그 디렉토리
-      - ./logs:/app/logs
     env_file:
-      - .env
-    working_dir: /app
-    # 현재 디렉토리의 .venv/bin/python 사용
-    command: ["/app/.venv/bin/python3", "main.py"]
-    networks:
-      - bot-network
-
-  strategy2:
-    image: python:3.12-slim
-    container_name: binance-strategy2
-    restart: unless-stopped
-    environment:
-      - TZ=Asia/Seoul
-      - LOG_FILENAME=strategy2.log
+      - .env                # 환경변수 파일
     volumes:
-      # 프로젝트 전체 마운트
-      - .:/app
-      # 로그 디렉토리
-      - ./logs:/app/logs
-    env_file:
-      - .env
+      - ./logs:/app/logs    # 로그 디렉토리 마운트 (필요할 경우만)
     working_dir: /app
-    command: ["/app/.venv/bin/python3", "main2.py"]
+    command: ["python3", "main.py"]  # 필요 없으면 Dockerfile CMD가 자동 사용됨
     networks:
       - bot-network
 
 networks:
   bot-network:
-    driver: bridge 
+    driver: bridge
