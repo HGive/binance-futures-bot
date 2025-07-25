@@ -19,5 +19,5 @@ nano .env
 # API 키 입력
 
 # 6. 웹서버 실행 
-(실행 전 가상환경 진입입)
+(실행 전 가상환경 진입)
 poetry run python web_controller.py

@@ -46,10 +46,21 @@ class Hour3PStrategy:
                     logging.info(f"[{self.symbol}] >>> TAKE PROFIT!")
                     return
 
-            if positions and len(positions) > 0 and positions[0]["contracts"] > 0:
-                print(positions)
-                logging.info(f"{positions}")
-                return
+            if positions and len(positions) > 0 and positions[0]["contracts"] > 0 :
+                open_orders = await self.exchange.fetch_open_orders(self.symbol)
+                if len(open_orders) < 1:
+                    position_info = positions[0]
+                    position_side = position_info['side']
+                    amount = abs(float(position_info['positionAmt']))
+                    entry_price = float(position_info['entryPrice'])
+                    if position_side == 'long':
+                        tp_price = entry_price * 1.03
+                        tp_side = 'sell'
+                    else:  # short
+                        tp_price = entry_price * 0.97
+                        tp_side = 'buy'
+                    await self.custom_tp_order(self.symbol, "TAKE_PROFIT_MARKET", tp_side, amount, tp_price)
+                    return
             
             # 롱/숏 진입 조건 설정
             should_long = False
@@ -72,16 +83,16 @@ class Hour3PStrategy:
                 adjusted_amount = buy_unit * self.leverage / current_price
                 tp_price = current_price * 1.03
                 await self.exchange.cancel_all_orders(symbol=self.symbol)
-                await self.custom_entry_order(self.symbol, "market", "buy", adjusted_amount, current_price)
-                await self.custom_tp_order(self.symbol, "TAKE_PROFIT_MARKET", "sell", adjusted_amount, tp_price)
+                done_entry = await self.custom_entry_order(self.symbol, "market", "buy", adjusted_amount, current_price)
+                done_tp = await self.custom_tp_order(self.symbol, "TAKE_PROFIT_MARKET", "sell", adjusted_amount, tp_price)
 
             # 숏 포지션 진입
             elif should_short:
                 adjusted_amount = buy_unit * self.leverage / current_price
                 tp_price = current_price * 0.97
                 await self.exchange.cancel_all_orders(symbol=self.symbol)
-                await self.custom_entry_order(self.symbol, "market", "sell", adjusted_amount, current_price)
-                await self.custom_tp_order(self.symbol, "TAKE_PROFIT_MARKET", "buy", adjusted_amount, tp_price)
+                done_entry = await self.custom_entry_order(self.symbol, "market", "sell", adjusted_amount, current_price)
+                done_tp = await self.custom_tp_order(self.symbol, "TAKE_PROFIT_MARKET", "buy", adjusted_amount, tp_price)
 
         except Exception as e:
             await self.exchange.cancel_all_orders(symbol=self.symbol)
@@ -97,21 +108,21 @@ class Hour3PStrategy:
         try:
             buy_order = await self.exchange.create_order(symbol, order_type, side, amount, price)
             if buy_order['status'] != 'open' and buy_order['status'] != 'closed':
-                logging.error(f"[{symbol}] buy 주문 실패 - 상태: {buy_order['status']}")
-                return
-            logging.info(f"[{symbol}] buy 주문 성공")
+                logging.error(f"[{symbol}] REJECT {side} ORDER  - STATUS: {buy_order['status']}")
+                raise
+            logging.info(f"[{symbol}] {side} ORDER SUCCESS")
         except Exception as e:
-            logging.error(f"[{symbol}] buy 주문 에러: {type(e).__name__}: {e}")
-            return
+            logging.error(f"[{symbol}] {side} ORDER REQUEST ERROR: {type(e).__name__}: {e}")
+            raise
         
     async def custom_tp_order(self,symbol,order_type,side,amount,tp_price,):
         try:
             tp_order = await self.exchange.create_order(symbol, order_type, side, amount, None, params={"stopPrice": tp_price})
             if tp_order['status'] != 'open' and tp_order['status'] != 'closed':
-                logging.error(f"[{symbol}] sell TP 주문 실패 - 상태: {tp_order['status']}")
-                return
-            logging.info(f"[{symbol}] sell TP 주문 성공")
+                logging.error(f"[{symbol}] REJECT TP ORDER  - STATUS: {tp_order['status']}")
+                raise
+            logging.info(f"[{symbol}] {side} TP ORDER SUCCESS")
             self.pending_tp_order_id = tp_order["id"]
         except Exception as e:
-            logging.error(f"[{symbol}] sell TP 주문 에러: {type(e).__name__}: {e}")
-            return
+            logging.error(f"[{symbol}] sell TP REQUEST ERROR: {type(e).__name__}: {e}")
+            raise
