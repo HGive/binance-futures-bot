@@ -20,7 +20,7 @@ class Hour3PStrategy:
 
     async def run_once(self):
         try:
-            logging.info(f"symbol: {self.symbol}. run_once start")
+            # logging.info(f"symbol: {self.symbol}. run_once start")
             balance = await self.exchange.fetch_balance()
             total_balance = balance["USDT"]["total"]
             avbl = balance["USDT"]["free"]
@@ -61,6 +61,7 @@ class Hour3PStrategy:
                         tp_side = 'buy'
                     await self.custom_tp_order(self.symbol, "TAKE_PROFIT_MARKET", tp_side, amount, tp_price)
                     return
+                return
             
             # 롱/숏 진입 조건 설정
             should_long = False
@@ -68,15 +69,15 @@ class Hour3PStrategy:
             
             # 롱 진입 조건 (RSI 낮을 때)
             if rsi < 30:
-                should_long = random.random() < 0.9
-            elif rsi < 40:
-                should_long = random.random() < 0.3
+                should_long = random.random() < 0.8
+            elif rsi < 35:
+                should_long = random.random() < 0.1
             
             # 숏 진입 조건 (RSI 높을 때)
-            if rsi > 80:
-                should_short = random.random() < 0.9
-            elif rsi > 75:
-                should_short = random.random() < 0.3
+            if rsi > 72:
+                should_short = random.random() < 0.8
+            elif rsi > 65:
+                should_short = random.random() < 0.1
 
             # 롱 포지션 진입
             if should_long:
