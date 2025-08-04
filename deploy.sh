@@ -22,6 +22,6 @@ echo "컨테이너 상태 확인 중..."
 docker compose ps
 
 echo "=== 배포 완료 ==="
-echo "로그 확인: docker-compose logs -f"
-echo "중지: docker-compose down"
-echo "재시작: docker-compose restart" 
+echo "로그 확인: docker compose logs -f"
+echo "중지: docker compose down"
+echo "재시작: docker compose restart" 
