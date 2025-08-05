@@ -128,7 +128,7 @@ class Hour3PStrategy:
     def calc_buy_unit(self, total_balance) -> int:
         base_amount = total_balance / 10
         buy_unit = math.floor(base_amount / 5) * 5
-        return buy_unit
+        return max(buy_unit, 5)  # 최소 5 USDT 보장
     
     async def custom_entry_order(self,symbol,order_type,side,amount,price):
         try:
