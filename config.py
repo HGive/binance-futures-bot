@@ -8,8 +8,7 @@ tz = timezone("Asia/Seoul")
 def timetz(*args): return datetime.now(tz).timetuple()
 logging.Formatter.converter = timetz
 
-# 로그 디렉토리 생성
-os.makedirs("logs", exist_ok=True)
+# 로그 디렉토리는 deploy.sh에서 생성됨
 
 load_dotenv()
 
@@ -26,4 +25,5 @@ logging.basicConfig(
 )
 
 # exchange = None
-exchange = ccxt.binance({"apiKey": os.environ["BINANCE_API_KEY"], "secret": os.environ["BINANCE_API_SECRET"], "enableRateLimit": True, "options": {"defaultType": "future", "adjustForTimeDifference": True}})
+binance_exchange = ccxt.binance({"apiKey": os.environ["BINANCE_API_KEY"], "secret": os.environ["BINANCE_API_SECRET"], "enableRateLimit": True, "options": {"defaultType": "future", "adjustForTimeDifference": True}})
+bybit_exchange = ccxt.bybit({"apiKey": os.environ["BYBIT_API_KEY"], "secret": os.environ["BYBIT_API_SECRET"], "enableRateLimit": True, "options": {"defaultType": "linear", "adjustForTimeDifference": True}})

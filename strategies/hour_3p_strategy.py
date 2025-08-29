@@ -76,7 +76,7 @@ class Hour3PStrategy:
                 if len(open_orders) < 1:
                     position_info = positions[0]
                     position_side = position_info['side']
-                    amount = abs(float(position_info['positionAmt']))
+                    amount = abs(float(position_info['contracts']))
                     entry_price = float(position_info['entryPrice'])
                     if position_side == 'long':
                         tp_price = entry_price * 1.03

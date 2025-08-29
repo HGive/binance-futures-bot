@@ -1,8 +1,8 @@
-from config import exchange, logging
+from config import binance_exchange, logging
 import asyncio
 from strategies.hour_3p_strategy import Hour3PStrategy
 
-SYMBOLS = ["CHR/USDT:USDT",
+BINANCE_SYMBOLS = ["CHR/USDT:USDT",
     "CRV/USDT:USDT",
     "ACT/USDT:USDT",
     "DEXE/USDT:USDT",
@@ -12,8 +12,8 @@ SYMBOLS = ["CHR/USDT:USDT",
 INTERVAL = 3600
 
 async def main():
-    await exchange.load_markets()
-    strategies = [Hour3PStrategy(exchange, symbol, 3) for symbol in SYMBOLS]
+    await binance_exchange.load_markets()
+    strategies = [Hour3PStrategy(binance_exchange, symbol, 3) for symbol in BINANCE_SYMBOLS]
     
     for s in strategies:
         await s.setup()
