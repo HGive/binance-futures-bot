@@ -60,6 +60,7 @@ class Hour3PStrategy:
             if len(liquidations) > 0:
                 await self.exchange.cancel_all_orders(symbol=self.symbol)
                 await self.re_order(liquidations=liquidations)
+                return
 
             # take profit check
             if self.pending_tp_order_id:
@@ -156,7 +157,7 @@ class Hour3PStrategy:
     async def re_order(self, liquidations):
         liquid_price = liquidations[0]['price']
         liquid_side = liquidations[0]['info']['side']
-        tp_ratio = 1.03 if liquid_side == 'SELL' else 0.97
+        tp_ratio = 1.05 if liquid_side == 'SELL' else 0.95
         entry_side = 'buy' if liquid_side == 'SELL' else 'sell'
         tp_side = 'sell' if liquid_side == 'SELL' else 'buy'
         
