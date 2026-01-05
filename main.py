@@ -1,6 +1,6 @@
-from config import binance_exchange, logging
+from config import binance_futures, logging
 import asyncio
-from strategies.hour_3p_strategy import Hour3PStrategy
+from strategies.spot_simple_strategy import SpotSimpleStrategy
 
 BINANCE_SYMBOLS = ["CHR/USDT:USDT",
     "CRV/USDT:USDT",
@@ -9,11 +9,11 @@ BINANCE_SYMBOLS = ["CHR/USDT:USDT",
     "QTUM/USDT:USDT",
     "KAVA/USDT:USDT",
     "AR/USDT:USDT",]
-INTERVAL = 3600
+INTERVAL = 300  # 5분마다 실행 (스팟은 천천히)
 
 async def main():
-    await binance_exchange.load_markets()
-    strategies = [Hour3PStrategy(binance_exchange, symbol, 3) for symbol in BINANCE_SYMBOLS]
+    await binance_futures.load_markets()
+    strategies = [SpotSimpleStrategy(binance_futures, symbol) for symbol in BINANCE_SYMBOLS]
     
     for s in strategies:
         await s.setup()

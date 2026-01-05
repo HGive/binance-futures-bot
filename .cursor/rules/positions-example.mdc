@@ -1,7 +1,13 @@
+---
+description: This is an example of Binance futures positions data structure.
+globs: ["**/*.py"]
+alwaysApply: true
+---
+
+```json
 [
   {
-    "info": {
-    },
+    "info": {},
     "id": null,
     "symbol": "AR/USDT:USDT",
     "contracts": 1.8,
@@ -29,3 +35,13 @@
     "takeProfitPrice": null
   }
 ]
+```
+
+## Key Fields for Trading Logic:
+
+- **`contracts`**: Position size (always positive value)
+- **`percentage`**: Unrealized P&L percentage 
+- **`side`**: "long" or "short"
+- **`entryPrice`**: Entry price of the position
+- **`markPrice`**: Current market price
+- **`unrealizedPnl`**: Unrealized profit/loss in USDT

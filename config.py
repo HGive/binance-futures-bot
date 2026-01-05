@@ -12,8 +12,8 @@ logging.Formatter.converter = timetz
 
 load_dotenv()
 
-# 환경변수에서 로그 파일명 가져오기 (기본값: hour_3p_strategy.log)
-log_filename = os.environ.get("LOG_FILENAME", "hour_3p_strategy.log")
+# 환경변수에서 로그 파일명 가져오기 (기본값: default_strategy.log)
+log_filename = os.environ.get("LOG_FILENAME", "default_strategy.log")
 log_path = os.path.join("logs", log_filename)
 
 logging.basicConfig(
@@ -25,5 +25,6 @@ logging.basicConfig(
 )
 
 # exchange = None
-binance_exchange = ccxt.binance({"apiKey": os.environ["BINANCE_API_KEY"], "secret": os.environ["BINANCE_API_SECRET"], "enableRateLimit": True, "options": {"defaultType": "future", "adjustForTimeDifference": True}})
+binance_futures = ccxt.binance({"apiKey": os.environ["BINANCE_API_KEY"], "secret": os.environ["BINANCE_API_SECRET"], "enableRateLimit": True, "options": {"defaultType": "future", "adjustForTimeDifference": True}})
+binance_spot = ccxt.binance({"apiKey": os.environ["BINANCE_API_KEY"], "secret": os.environ["BINANCE_API_SECRET"], "enableRateLimit": True, "options": {"defaultType": "spot", "adjustForTimeDifference": True}})
 bybit_exchange = ccxt.bybit({"apiKey": os.environ["BYBIT_API_KEY"], "secret": os.environ["BYBIT_API_SECRET"], "enableRateLimit": True, "options": {"defaultType": "linear", "adjustForTimeDifference": True}})
