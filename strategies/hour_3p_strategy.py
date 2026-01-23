@@ -2,9 +2,9 @@
 import pandas as pd
 import logging
 import random
-import math
 import time
 from modules.module_rsi import calc_rsi
+from modules.module_common import calc_buy_unit
 
 class Hour3PStrategy:
     def __init__(self, exchange, symbol, leverage=3, timeframe="1h"):
@@ -42,7 +42,7 @@ class Hour3PStrategy:
             balance = await self.exchange.fetch_balance()
             total_balance = balance["USDT"]["total"]
             avbl = balance["USDT"]["free"]
-            self.buy_unit : int = self.calc_buy_unit(total_balance)
+            self.buy_unit: int = calc_buy_unit(total_balance)
             if avbl < self.buy_unit:
                 logging.info(f"not enough minerals.")
                 return
@@ -126,11 +126,6 @@ class Hour3PStrategy:
             logging.error(f"[{self.symbol}] Error: {type(e).__name__}: {e}")
 
 
-    def calc_buy_unit(self, total_balance) -> int:
-        base_amount = total_balance / 10
-        buy_unit = math.floor(base_amount / 5) * 5
-        return max(buy_unit, 5)  # 최소 5 USDT 보장
-    
     async def custom_entry_order(self,symbol,order_type,side,amount,price):
         try:
             buy_order = await self.exchange.create_order(symbol, order_type, side, amount, price)
