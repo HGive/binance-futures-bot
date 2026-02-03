@@ -21,7 +21,7 @@ RSI_PERIOD = 14
 RSI_THRESHOLD = 50
 TAKE_PROFIT_PCT = 0.03      # +3%
 AVG_DOWN_TRIGGER_PCT = 0.05  # -5%에서 추가매수
-STOP_LOSS_PCT = -5.0         # 추가매수 후 -5%에서 손절
+STOP_LOSS_PCT = -7.0         # 추가매수 후 -7%에서 손절
 AVG_DOWN_MULTIPLIER = 2
 
 
@@ -129,9 +129,21 @@ class Min15Strategy3p:
         contracts = float(position["contracts"])
         pnl_pct = float(position["percentage"])  # unrealizedPnl %
 
+        # 봇 재시작 시 추매 완료 여부 추론 (포지션 크기로 판단)
+        if self.avg_down_count == 0:
+            expected_single = buy_unit * self.leverage / entry_price
+            if contracts > expected_single * 1.5:
+                self.avg_down_count = 1
+                logging.info(f"[{self.symbol}] Detected existing avg_down position (contracts={contracts:.4f})")
+
         # 익절 주문 존재 여부 확인
         open_orders = await self.exchange.fetch_open_orders(self.symbol)
-        has_tp = any(o["type"] == "TAKE_PROFIT_MARKET" for o in open_orders)
+        order_types = [o.get("type", "") for o in open_orders]
+        logging.debug(f"[{self.symbol}] Open orders types: {order_types}")
+        has_tp = any(
+            o.get("type", "") in ("TAKE_PROFIT_MARKET", "take_profit_market", "TAKE_PROFIT")
+            for o in open_orders
+        )
 
         # TP 주문이 없으면 재설정
         if not has_tp:

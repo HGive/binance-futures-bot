@@ -1,12 +1,12 @@
-from config import exchange, logging, IS_TESTNET
+from config import exchange, logging, IS_DEMO
 import asyncio
 from strategies.min15_3p_strategy import Min15Strategy3p
 
 # === 심볼 설정 ===
-if IS_TESTNET:
-    # Testnet 지원 심볼
+if IS_DEMO:
+    # Demo Trading 심볼
     SYMBOLS = ["BTC/USDT:USDT", "ETH/USDT:USDT"]
-    INTERVAL = 60  # 1분 (테스트용)
+    INTERVAL = 60  # 1분 (데모용)
 else:
     # Production 심볼
     SYMBOLS = [
@@ -22,8 +22,8 @@ else:
 
 
 async def show_status(strategies):
-    """현재 상태 출력 (테스트넷용)"""
-    if not IS_TESTNET:
+    """현재 상태 출력 (데모용)"""
+    if not IS_DEMO:
         return
     try:
         balance = await exchange.fetch_balance()
@@ -48,7 +48,7 @@ async def show_status(strategies):
 
 async def main():
     logging.info("=" * 50)
-    logging.info(f"Min15 3% Strategy - {'TESTNET' if IS_TESTNET else 'PRODUCTION'}")
+    logging.info(f"Min15 3% Strategy - {'DEMO' if IS_DEMO else 'PRODUCTION'}")
     logging.info(f"Symbols: {SYMBOLS}")
     logging.info(f"Interval: {INTERVAL}s")
     logging.info("=" * 50)
@@ -63,7 +63,7 @@ async def main():
     iteration = 0
     while True:
         iteration += 1
-        if IS_TESTNET:
+        if IS_DEMO:
             logging.info(f"\n--- Iteration #{iteration} ---")
             await show_status(strategies)
         
