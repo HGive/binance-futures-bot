@@ -1,19 +1,17 @@
 services:
   strategy1:
     build:
-      context: .            # 현재 디렉토리의 Dockerfile 사용해서 빌드
+      context: .
     container_name: binance-strategy1
     restart: unless-stopped
     environment:
       - TZ=Asia/Seoul
       - LOG_FILENAME=strategy1.log
     env_file:
-      - .env                # 환경변수 파일 (시작 시 주입)
+      - .env
     volumes:
-      - ./logs:/app/logs    # 로그 디렉토리 마운트
-      - ./.env:/app/.env:ro # 호스트 .env를 컨테이너에서도 직접 읽기 (수정 후 재시작 필요)
-    working_dir: /app
-    command: ["python3", "main.py"]  # 필요 없으면 Dockerfile CMD가 자동 사용됨
+      - ./logs:/app/logs
+      - ./.env:/app/.env:ro  # python-dotenv용 (load_dotenv)
     networks:
       - bot-network
 

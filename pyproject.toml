@@ -10,12 +10,8 @@ python = "^3.11"
 python-dotenv = "^1.0.1"
 pandas = "^2.2.3"
 numpy = "^1.23.5"
-jupyter = "^1.0.0"
 ccxt = "^4.2.71"
-requests = "^2.31.0"
-flask = "^3.0.0"
-psutil = "^5.9.0"
-nest-asyncio = "^1.6.0"
+pytz = "^2024.1"
 
 [build-system]
 requires = ["poetry-core"]

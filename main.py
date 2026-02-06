@@ -1,75 +1,38 @@
-from config import exchange, logging, IS_DEMO
+from config import exchange, logging
 import asyncio
 from strategies.min15_3p_strategy import Min15Strategy3p
 
 # === 심볼 설정 ===
-if IS_DEMO:
-    # Demo Trading 심볼
-    SYMBOLS = ["BTC/USDT:USDT", "ETH/USDT:USDT"]
-    INTERVAL = 60  # 1분 (데모용)
-else:
-    # Production 심볼
-    SYMBOLS = [
-        "CHR/USDT:USDT",
-        "CRV/USDT:USDT",
-        "ACT/USDT:USDT",
-        "DEXE/USDT:USDT",
-        "QTUM/USDT:USDT",
-        "KAVA/USDT:USDT",
-        "AR/USDT:USDT",
-    ]
-    INTERVAL = 60  # 1분 (15분봉 전략이라 자주 체크해도 됨)
-
-
-async def show_status(strategies):
-    """현재 상태 출력 (데모용)"""
-    if not IS_DEMO:
-        return
-    try:
-        balance = await exchange.fetch_balance()
-        total = balance["USDT"]["total"]
-        free = balance["USDT"]["free"]
-        logging.info(f"[BALANCE] Total={total:.2f} USDT, Free={free:.2f} USDT")
-        
-        for s in strategies:
-            positions = await exchange.fetch_positions(symbols=[s.symbol])
-            pos = positions[0] if positions and positions[0]["contracts"] > 0 else None
-            if pos:
-                side = pos["side"]
-                entry = float(pos["entryPrice"])
-                pnl = float(pos["unrealizedPnl"])
-                pnl_pct = float(pos["percentage"])
-                logging.info(f"[{s.symbol}] {side.upper()} @ {entry:.2f} | PnL: {pnl:.2f} ({pnl_pct:.2f}%) | AvgDown: {s.avg_down_count}")
-            else:
-                logging.info(f"[{s.symbol}] No position")
-    except Exception as e:
-        logging.error(f"Status check failed: {e}")
+SYMBOLS = [
+    "CHR/USDT:USDT",
+    "CRV/USDT:USDT",
+    "ACT/USDT:USDT",
+    "DEXE/USDT:USDT",
+    "QTUM/USDT:USDT",
+    "KAVA/USDT:USDT",
+    "AR/USDT:USDT",
+]
+INTERVAL = 60  # 1분 (15분봉 전략이라 자주 체크해도 됨)
 
 
 async def main():
     logging.info("=" * 50)
-    logging.info(f"Min15 3% Strategy - {'DEMO' if IS_DEMO else 'PRODUCTION'}")
+    logging.info("Min15 3% Strategy - PRODUCTION")
     logging.info(f"Symbols: {SYMBOLS}")
     logging.info(f"Interval: {INTERVAL}s")
     logging.info("=" * 50)
 
     await exchange.load_markets()
     strategies = [Min15Strategy3p(exchange, symbol) for symbol in SYMBOLS]
-    
+
     for s in strategies:
         await s.setup()
     logging.info("=== All strategies initialized ===")
 
-    iteration = 0
     while True:
-        iteration += 1
-        if IS_DEMO:
-            logging.info(f"\n--- Iteration #{iteration} ---")
-            await show_status(strategies)
-        
         for s in strategies:
             await s.run_once()
-        
+
         await asyncio.sleep(INTERVAL)
 
 

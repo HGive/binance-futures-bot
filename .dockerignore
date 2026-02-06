@@ -54,6 +54,10 @@ logs/
 
 # Jupyter
 .ipynb_checkpoints
+*.ipynb
+
+# Backtest (프로덕션에 불필요)
+backtest/
 
 # Docker
 Dockerfile

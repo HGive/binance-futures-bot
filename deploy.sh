@@ -5,21 +5,15 @@ echo "=== 바이낸스 봇 도커 배포 스크립트 ==="
 # 로그 디렉토리 생성
 mkdir -p logs
 
-# .env에서 로그 파일명들 읽기
-LOG_FILENAME=$(grep "^LOG_FILENAME=" .env | cut -d'=' -f2 || echo "hour_3p_strategy.log")
-LOG_FILENAME2=$(grep "^LOG_FILENAME2=" .env | cut -d'=' -f2 || echo "strategy2.log")
+# .env에서 로그 파일명 읽기
+LOG_FILENAME=$(grep "^LOG_FILENAME=" .env | cut -d'=' -f2 || echo "strategy1.log")
 
 echo "로그 파일명: $LOG_FILENAME"
-[ -n "$LOG_FILENAME2" ] && echo "추가 로그 파일명: $LOG_FILENAME2"
 
-# 로그 파일들 생성
+# 로그 파일 생성 및 권한 설정
 touch "logs/$LOG_FILENAME"
-[ -n "$LOG_FILENAME2" ] && touch "logs/$LOG_FILENAME2"
-
-# 권한 설정 (ubuntu 사용자로 실행)
 chmod 775 logs/
 chmod 775 "logs/$LOG_FILENAME"
-[ -n "$LOG_FILENAME2" ] && chmod 775 "logs/$LOG_FILENAME2"
 
 echo "로그 파일 권한을 775로 설정했습니다"
 
