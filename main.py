@@ -1,6 +1,6 @@
 from config import exchange, logging
 import asyncio
-from strategies.min15_3p_strategy import Min15Strategy3p
+from strategies.trailing_atr import TrailingAtrStrategy
 
 # === 심볼 설정 ===
 SYMBOLS = [
@@ -17,13 +17,13 @@ INTERVAL = 60  # 1분 (15분봉 전략이라 자주 체크해도 됨)
 
 async def main():
     logging.info("=" * 50)
-    logging.info("Min15 3% Strategy - PRODUCTION")
+    logging.info("Trailing ATR Strategy - PRODUCTION")
     logging.info(f"Symbols: {SYMBOLS}")
     logging.info(f"Interval: {INTERVAL}s")
     logging.info("=" * 50)
 
     await exchange.load_markets()
-    strategies = [Min15Strategy3p(exchange, symbol) for symbol in SYMBOLS]
+    strategies = [TrailingAtrStrategy(exchange, symbol) for symbol in SYMBOLS]
 
     for s in strategies:
         await s.setup()
