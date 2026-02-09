@@ -90,7 +90,11 @@ class TrailingAtrStrategy:
                 await self._manage_position(pos, c, h, l, atr)
                 return
 
-            # --- 포지션 없으면 → 진입 판단 ---
+            # --- 포지션 없으면 → 잔여 주문 정리 후 진입 판단 ---
+            if self.entry_price is not None:
+                # 이전에 포지션이 있었는데 사라짐 → 거래소 잔여 주문 정리
+                await self.exchange.cancel_all_orders(symbol=self.symbol)
+                logging.info(f"[{self.symbol}] Position gone → cleaned up stale orders")
             self._reset_state()
 
             if avbl < buy_unit:
@@ -142,7 +146,8 @@ class TrailingAtrStrategy:
         else:
             sl_price = price + atr * INITIAL_SL_ATR_MULT
 
-        # 1) Market 진입 (실패 시 즉시 리턴)
+        # 1) 혹시 남아있는 잔여 주문 정리 후 Market 진입
+        await self.exchange.cancel_all_orders(symbol=self.symbol)
         try:
             await self.exchange.create_order(self.symbol, "market", side, amount)
         except Exception as e:
@@ -257,6 +262,7 @@ class TrailingAtrStrategy:
 
         try:
             await self.exchange.cancel_all_orders(symbol=self.symbol)
+            self.sl_order_placed = False
             await self.exchange.create_order(
                 self.symbol, "market", close_side, partial_size
             )
@@ -279,6 +285,7 @@ class TrailingAtrStrategy:
         close_side = "sell" if side == "long" else "buy"
         try:
             await self.exchange.cancel_all_orders(symbol=self.symbol)
+            self.sl_order_placed = False
             await self.exchange.create_order(self.symbol, "market", close_side, contracts)
             logging.warning(f"[{self.symbol}] CLOSED - Reason: {reason}")
             self._reset_state()
@@ -296,6 +303,7 @@ class TrailingAtrStrategy:
                 self.symbol, "STOP_MARKET", side, amount, None,
                 params={"stopPrice": sl_price, "reduceOnly": True}
             )
+            self.sl_order_placed = True
         except Exception as e:
             if "-4120" in str(e):
                 self.sl_order_supported = False
@@ -313,12 +321,9 @@ class TrailingAtrStrategy:
             return  # 트레일링 모드에서는 코드로 SL 관리
         if not self.sl_order_supported:
             return  # 이 심볼은 STOP_MARKET 미지원
-        open_orders = await self.exchange.fetch_open_orders(self.symbol)
-        has_sl = any(
-            o.get("type", "") in ("STOP_MARKET", "stop_market", "STOP")
-            for o in open_orders
-        )
-        if not has_sl and self.sl_price is not None:
+        if self.sl_order_placed:
+            return  # 이미 SL 주문이 배치됨
+        if self.sl_price is not None:
             sl_side = "sell" if side == "long" else "buy"
             await self._place_sl_order(sl_side, contracts, self.sl_price)
             logging.info(f"[{self.symbol}] SL order restored @ {self.sl_price:.4f}")
@@ -333,4 +338,5 @@ class TrailingAtrStrategy:
         self.trailing_active = False
         self.best_price = None
         self.sl_price = None
-        self.sl_order_supported = True  # STOP_MARKET 지원 여부
+        self.sl_order_supported = True   # STOP_MARKET 지원 여부
+        self.sl_order_placed = False     # SL 주문 배치 여부
