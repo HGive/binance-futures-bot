@@ -305,11 +305,15 @@ class TrailingAtrStrategy:
             )
             self.sl_order_placed = True
         except Exception as e:
-            if "-4120" in str(e):
+            err = str(e)
+            if "-4120" in err:
                 self.sl_order_supported = False
                 logging.warning(
                     f"[{self.symbol}] STOP_MARKET not supported → code-based SL only"
                 )
+            elif "-4045" in err:
+                self.sl_order_placed = True  # 이미 최대치 → 재시도 불필요
+                logging.warning(f"[{self.symbol}] Max stop order limit reached → skip")
             else:
                 logging.warning(f"[{self.symbol}] SL order failed: {e}")
 
@@ -326,7 +330,8 @@ class TrailingAtrStrategy:
         if self.sl_price is not None:
             sl_side = "sell" if side == "long" else "buy"
             await self._place_sl_order(sl_side, contracts, self.sl_price)
-            logging.info(f"[{self.symbol}] SL order restored @ {self.sl_price:.4f}")
+            if self.sl_order_placed:
+                logging.info(f"[{self.symbol}] SL order restored @ {self.sl_price:.4f}")
 
     # =========================================================
     #  상태 초기화
