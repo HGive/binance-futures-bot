@@ -1,0 +1,9 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(for sym in CHR/USDT:USDT CRV/USDT:USDT ACT/USDT:USDT DEXE/USDT:USDT QTUM/USDT:USDT KAVA/USDT:USDT AR/USDT:USDT BTC/USDT:USDT)",
+      "Bash(do echo \"=== $sym 15m 1000봉 ===\")",
+      "Bash(done)"
+    ]
+  }
+}

@@ -1,11 +1,12 @@
 """
-min15_3p_strategy 백테스팅 v2 - 물타기 없음
-- 물타기 완전 제거
-- 손익비 개선 (익절 늦춤, 손절 타이트)
-- 진입 필터 강화
+랜덤 진입 백테스팅 - 벤치마크용
+- 진입: 완전 랜덤 (매 봉 일정 확률로 롱/숏 랜덤 진입)
+- 청산: v3와 동일 (부분 익절 +5% 30%, 트레일링 ATR×3.5, SL ATR×2.0)
+- 목적: 진입 조건이 실제로 의미있는지 검증
 """
 import sys
 import math
+import random
 from pathlib import Path
 
 import pandas as pd
@@ -14,51 +15,30 @@ import numpy as np
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
-from modules.module_ema import calc_ema
-
-# === 전략 상수 ===
+# === 청산 파라미터 (v3와 동일) ===
 TIMEFRAME = "15m"
 LEVERAGE = 3
-EMA_MEDIUM = 20
-EMA_SLOW = 120
-SLOPE_PERIOD = 3
-RSI_PERIOD = 14
-
-# === 개선된 진입 필터 ===
-RSI_LONG_THRESHOLD = 55       # 60 → 55 (더 엄격)
-RSI_SHORT_THRESHOLD = 45     # 40 → 45 (더 엄격)
-
-# === 개선된 익절/손절 ===
-PARTIAL_TP_PCT = 0.05         # 3% → 5% (더 늦게 익절)
-TRAILING_STOP_ATR_MULT = 2.5  # 2.0 → 2.5 (추세 더 타기)
 ATR_PERIOD = 14
-INITIAL_SL_ATR_MULT = 2.0     # 2.5 → 2.0 (손절 타이트)
+PARTIAL_TP_PCT = 0.05
+PARTIAL_TP_RATIO = 0.30
+TRAILING_STOP_ATR_MULT = 3.5
+INITIAL_SL_ATR_MULT = 2.0
 
-# === 물타기 비활성화 ===
-ENABLE_AVG_DOWN = False
+# === 랜덤 진입 설정 ===
+# 매 봉마다 ENTRY_PROB 확률로 진입 시도 (포지션 없을 때만)
+ENTRY_PROB = 0.05   # 5% 확률 (너무 잦으면 실전과 다름)
 
-# === 포지션 사이징 ===
 POSITION_SIZE_PCT = 0.10
 MIN_BUY_UNIT = 5
-
 INITIAL_BALANCE = 1000.0
 SYMBOL = "BTC/USDT:USDT"
+
+RANDOM_SEED = 42    # 재현 가능하도록
 
 
 def calc_buy_unit(total_balance: float) -> int:
     base_amount = total_balance * POSITION_SIZE_PCT
     return max(math.floor(base_amount), MIN_BUY_UNIT)
-
-
-def calc_rsi_series(close: pd.Series, period: int = 14) -> pd.Series:
-    delta = close.diff()
-    gains = delta.clip(lower=0)
-    losses = (-delta).clip(lower=0)
-    _gain = gains.ewm(com=(period - 1), min_periods=period).mean()
-    _loss = losses.ewm(com=(period - 1), min_periods=period).mean()
-    rs = _gain / _loss.replace(0, np.nan)
-    rsi = 100 - (100 / (1 + rs))
-    return rsi
 
 
 def calc_atr_series(high: pd.Series, low: pd.Series, close: pd.Series, period: int = 14) -> pd.Series:
@@ -71,24 +51,9 @@ def calc_atr_series(high: pd.Series, low: pd.Series, close: pd.Series, period: i
     return atr
 
 
-def detect_trend(price: float, ema20: pd.Series, ema120: pd.Series, idx: int) -> str:
-    if idx < SLOPE_PERIOD:
-        return "NONE"
-    ema20_now = ema20.iloc[idx]
-    ema20_prev = ema20.iloc[idx - SLOPE_PERIOD]
-    ema120_now = ema120.iloc[idx]
-    ema120_prev = ema120.iloc[idx - SLOPE_PERIOD]
-    slope_20 = (ema20_now - ema20_prev) / ema20_prev * 100 if ema20_prev else 0
-    slope_120 = (ema120_now - ema120_prev) / ema120_prev * 100 if ema120_prev else 0
+def run_backtest(df: pd.DataFrame, initial_balance: float = INITIAL_BALANCE, seed: int = RANDOM_SEED) -> tuple:
+    rng = random.Random(seed)
 
-    if price > ema20_now and price > ema120_now and slope_20 > 0 and slope_120 > 0:
-        return "UPTREND"
-    if price < ema20_now and price < ema120_now and slope_20 < 0 and slope_120 < 0:
-        return "DOWNTREND"
-    return "NONE"
-
-
-def run_backtest(df: pd.DataFrame, initial_balance: float = INITIAL_BALANCE) -> tuple:
     df = df.copy()
     df.columns = [c.lower() for c in df.columns]
     if "timestamp" not in df.columns and df.index.name != "timestamp":
@@ -97,24 +62,20 @@ def run_backtest(df: pd.DataFrame, initial_balance: float = INITIAL_BALANCE) -> 
     close = df["close"].astype(float)
     high_s = df["high"].astype(float)
     low_s = df["low"].astype(float)
-    ema20 = calc_ema(close, EMA_MEDIUM)
-    ema120 = calc_ema(close, EMA_SLOW)
-    rsi_series = calc_rsi_series(close, RSI_PERIOD)
     atr_series = calc_atr_series(high_s, low_s, close, ATR_PERIOD)
 
     balance = initial_balance
     position = None
     trades = []
     equity = [initial_balance]
-    min_bars = max(EMA_SLOW + SLOPE_PERIOD, RSI_PERIOD, ATR_PERIOD)
+
+    min_bars = ATR_PERIOD + 1
 
     for i in range(min_bars, len(df)):
         row = df.iloc[i]
         ts = row.get("timestamp", df.index[i])
         o, h, l, c = float(row["open"]), float(row["high"]), float(row["low"]), float(row["close"])
-        rsi = rsi_series.iloc[i]
-        if pd.isna(rsi):
-            rsi = 50.0
+
         atr = atr_series.iloc[i]
         if pd.isna(atr) or atr <= 0:
             atr = c * 0.01
@@ -128,7 +89,7 @@ def run_backtest(df: pd.DataFrame, initial_balance: float = INITIAL_BALANCE) -> 
             size = position["size"]
             sl_price = position["sl_price"]
 
-            # 트레일링 최고/최저 갱신
+            # 트레일링 갱신
             if position["trailing_active"]:
                 if side == "long":
                     position["best_price"] = max(position["best_price"], h)
@@ -159,12 +120,12 @@ def run_backtest(df: pd.DataFrame, initial_balance: float = INITIAL_BALANCE) -> 
                 equity.append(balance)
                 continue
 
-            # 부분 익절 (+5%)
+            # 부분 익절 (+5%, 30% 청산)
             if not position["partial_taken"]:
                 if side == "long":
                     partial_tp = entry_price * (1 + PARTIAL_TP_PCT)
                     if h >= partial_tp:
-                        partial_size = size * 0.5
+                        partial_size = size * PARTIAL_TP_RATIO
                         pnl = partial_size * (partial_tp - entry_price)
                         balance += pnl
                         trades.append({
@@ -176,11 +137,11 @@ def run_backtest(df: pd.DataFrame, initial_balance: float = INITIAL_BALANCE) -> 
                         position["partial_taken"] = True
                         position["trailing_active"] = True
                         position["best_price"] = h
-                        position["sl_price"] = entry_price  # 본전 보장
+                        position["sl_price"] = entry_price
                 else:
                     partial_tp = entry_price * (1 - PARTIAL_TP_PCT)
                     if l <= partial_tp:
-                        partial_size = size * 0.5
+                        partial_size = size * PARTIAL_TP_RATIO
                         pnl = partial_size * (entry_price - partial_tp)
                         balance += pnl
                         trades.append({
@@ -228,31 +189,29 @@ def run_backtest(df: pd.DataFrame, initial_balance: float = INITIAL_BALANCE) -> 
             equity.append(balance)
             continue
 
-        # ===== 진입 판단 =====
-        trend = detect_trend(c, ema20, ema120, i)
-        if trend == "NONE" or balance < buy_unit:
+        # ===== 랜덤 진입 =====
+        if balance < buy_unit:
             equity.append(balance)
             continue
 
-        should_long = trend == "UPTREND" and rsi < RSI_LONG_THRESHOLD
-        should_short = trend == "DOWNTREND" and rsi > RSI_SHORT_THRESHOLD
+        if rng.random() < ENTRY_PROB:
+            side = rng.choice(["long", "short"])
+            size = buy_unit * LEVERAGE / c
+            if side == "long":
+                sl_price = c - atr * INITIAL_SL_ATR_MULT
+                position = {
+                    "side": "long", "entry_price": c, "size": size,
+                    "partial_taken": False, "trailing_active": False,
+                    "best_price": c, "sl_price": sl_price,
+                }
+            else:
+                sl_price = c + atr * INITIAL_SL_ATR_MULT
+                position = {
+                    "side": "short", "entry_price": c, "size": size,
+                    "partial_taken": False, "trailing_active": False,
+                    "best_price": c, "sl_price": sl_price,
+                }
 
-        if should_long:
-            size = buy_unit * LEVERAGE / c
-            sl_price = c - atr * INITIAL_SL_ATR_MULT
-            position = {
-                "side": "long", "entry_price": c, "size": size,
-                "partial_taken": False, "trailing_active": False,
-                "best_price": c, "sl_price": sl_price,
-            }
-        elif should_short:
-            size = buy_unit * LEVERAGE / c
-            sl_price = c + atr * INITIAL_SL_ATR_MULT
-            position = {
-                "side": "short", "entry_price": c, "size": size,
-                "partial_taken": False, "trailing_active": False,
-                "best_price": c, "sl_price": sl_price,
-            }
         equity.append(balance)
 
     # 마지막 포지션 청산
@@ -282,10 +241,15 @@ def fetch_ohlcv(symbol: str = SYMBOL, timeframe: str = TIMEFRAME, limit: int = 1
     return df
 
 
-def print_summary(trades: list, equity: pd.Series, initial: float, final: float):
+def print_summary(trades: list, equity: pd.Series, initial: float, final: float, seed: int):
     print("\n" + "=" * 60)
-    print("  v2 NO AVGDOWN - 물타기 없음")
+    print(f"  RANDOM ENTRY (seed={seed}) - 벤치마크")
     print("=" * 60)
+    print(f"  진입 확률     : {ENTRY_PROB*100:.0f}%/봉 (랜덤 롱/숏)")
+    print(f"  부분 익절      : +{PARTIAL_TP_PCT*100:.0f}% / {PARTIAL_TP_RATIO*100:.0f}% 청산")
+    print(f"  트레일링 ATR   : x{TRAILING_STOP_ATR_MULT}")
+    print(f"  초기 SL ATR    : x{INITIAL_SL_ATR_MULT}")
+    print("-" * 60)
     print(f"  기간 봉 수     : {len(equity)}")
     print(f"  초기 잔고     : {initial:,.2f} USDT")
     print(f"  최종 잔고     : {final:,.2f} USDT")
@@ -324,23 +288,30 @@ def print_summary(trades: list, equity: pd.Series, initial: float, final: float)
 
 def main():
     import argparse
-    parser = argparse.ArgumentParser(description="v2 NO AVGDOWN backtest")
+    parser = argparse.ArgumentParser(description="Random entry backtest (benchmark)")
     parser.add_argument("--symbol", default=SYMBOL)
-    parser.add_argument("--limit", type=int, default=1000)
+    parser.add_argument("--limit", type=int, default=1500)
     parser.add_argument("--balance", type=float, default=INITIAL_BALANCE)
+    parser.add_argument("--seed", type=int, default=RANDOM_SEED)
+    parser.add_argument("--runs", type=int, default=5, help="시드 바꿔가며 N회 반복")
     args = parser.parse_args()
 
     print(f"Fetching {args.limit} x {TIMEFRAME} candles for {args.symbol}...")
     df = fetch_ohlcv(symbol=args.symbol, timeframe=TIMEFRAME, limit=args.limit)
-    print(f"Data: {len(df)} rows")
+    print(f"Data: {len(df)} rows\n")
 
-    trades, equity, final_balance = run_backtest(df, initial_balance=args.balance)
-    print_summary(trades, equity, args.balance, final_balance)
+    all_returns = []
+    for run in range(args.runs):
+        seed = args.seed + run
+        trades, equity, final_balance = run_backtest(df, initial_balance=args.balance, seed=seed)
+        print_summary(trades, equity, args.balance, final_balance, seed)
+        ret = (final_balance - args.balance) / args.balance * 100
+        all_returns.append(ret)
 
-    if trades:
-        print("최근 10건 거래:")
-        for t in trades[-10:]:
-            print(f"  {t['timestamp']} | {t['side']:5s} | {t['exit_reason']:15s} | PnL: {t['pnl']:+.2f}")
+    print("=" * 60)
+    print(f"  {args.runs}회 평균 수익률: {sum(all_returns)/len(all_returns):+.2f}%")
+    print(f"  최고: {max(all_returns):+.2f}%  최저: {min(all_returns):+.2f}%")
+    print("=" * 60)
 
 
 if __name__ == "__main__":
