@@ -25,6 +25,8 @@ import numpy as np
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
+from modules.module_bb import calc_bb_series
+
 # === 전략 상수 ===
 TIMEFRAME = "15m"
 LEVERAGE = 3
@@ -48,14 +50,6 @@ def calc_buy_unit(total_balance: float) -> int:
     base_amount = total_balance * POSITION_SIZE_PCT
     return max(math.floor(base_amount), MIN_BUY_UNIT)
 
-
-def calc_bb_series(close: pd.Series, period: int = 20, std: float = 2.0):
-    """볼린저 밴드 계산 (중앙선, 상단, 하단)"""
-    mid = close.rolling(window=period).mean()
-    sigma = close.rolling(window=period).std()
-    upper = mid + std * sigma
-    lower = mid - std * sigma
-    return mid, upper, lower
 
 
 def run_backtest(df: pd.DataFrame, initial_balance: float = INITIAL_BALANCE) -> tuple:

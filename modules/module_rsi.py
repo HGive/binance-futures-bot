@@ -17,6 +17,17 @@ def calc_rsi(ohlc: pd.DataFrame, period: int = 14):
     return rsi.iloc[-1]  # 마지막 값(현재 RSI)만 반환
 
 
+def calc_rsi_series(close: pd.Series, period: int = 14) -> pd.Series:
+    """봉별 RSI 시리즈 반환 (백테스트용)"""
+    delta = close.diff()
+    gains = delta.clip(lower=0)
+    losses = (-delta).clip(lower=0)
+    _gain = gains.ewm(com=(period - 1), min_periods=period).mean()
+    _loss = losses.ewm(com=(period - 1), min_periods=period).mean()
+    rs = _gain / _loss.replace(0, float('nan'))
+    return 100 - (100 / (1 + rs))
+
+
 # def calc_rsi(data, period=14):
 #     changes = []
 #     gains = []

@@ -12,12 +12,13 @@ import math
 from pathlib import Path
 
 import pandas as pd
-import numpy as np
 
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
 from modules.module_ema import calc_ema
+from modules.module_stochrsi import calc_stoch_rsi as calc_stoch_rsi_series
+from modules.module_atr import calc_atr_series
 
 # === 전략 상수 ===
 TIMEFRAME = "15m"
@@ -57,41 +58,6 @@ def calc_buy_unit(total_balance: float) -> int:
     base_amount = total_balance * POSITION_SIZE_PCT
     return max(math.floor(base_amount), MIN_BUY_UNIT)
 
-
-def calc_stoch_rsi_series(close: pd.Series) -> pd.DataFrame:
-    """Stochastic RSI 계산 (K, D 반환)"""
-    period = STOCH_RSI_PERIOD
-    k_period = STOCH_RSI_K_PERIOD
-    d_period = STOCH_RSI_D_PERIOD
-
-    # RSI 계산
-    delta = close.diff(1)
-    gain = delta.where(delta > 0, 0.0)
-    loss = -delta.where(delta < 0, 0.0)
-    avg_gain = gain.rolling(window=period).mean()
-    avg_loss = loss.rolling(window=period).mean()
-    rs = avg_gain / avg_loss.replace(0, np.nan)
-    rsi = 100 - (100 / (1 + rs))
-
-    # Stoch RSI (0~100)
-    rsi_min = rsi.rolling(window=period).min()
-    rsi_max = rsi.rolling(window=period).max()
-    stoch_rsi = (rsi - rsi_min) / (rsi_max - rsi_min).replace(0, np.nan) * 100
-
-    k = stoch_rsi.rolling(window=k_period).mean()
-    d = k.rolling(window=d_period).mean()
-
-    return pd.DataFrame({"K": k, "D": d})
-
-
-def calc_atr_series(high: pd.Series, low: pd.Series, close: pd.Series, period: int = 14) -> pd.Series:
-    prev_close = close.shift(1)
-    tr1 = high - low
-    tr2 = (high - prev_close).abs()
-    tr3 = (low - prev_close).abs()
-    tr = pd.concat([tr1, tr2, tr3], axis=1).max(axis=1)
-    atr = tr.ewm(span=period, adjust=False).mean()
-    return atr
 
 
 def detect_trend(price: float, ema20: pd.Series, ema60: pd.Series, ema200: pd.Series, idx: int) -> str:

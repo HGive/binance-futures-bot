@@ -34,6 +34,8 @@ import numpy as np
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
+from modules.module_atr import calc_atr_series
+
 # === 타임프레임 ===
 TIMEFRAME = "1h"
 LEVERAGE = 3
@@ -67,13 +69,6 @@ def calc_buy_unit(total_balance: float) -> int:
     base_amount = total_balance * POSITION_SIZE_PCT
     return max(math.floor(base_amount), MIN_BUY_UNIT)
 
-
-def calc_atr_series(high: pd.Series, low: pd.Series, close: pd.Series, period: int = 14) -> pd.Series:
-    prev_close = close.shift(1)
-    tr = pd.concat([high - low,
-                    (high - prev_close).abs(),
-                    (low - prev_close).abs()], axis=1).max(axis=1)
-    return tr.ewm(span=period, adjust=False).mean()
 
 
 def calc_di_series(high: pd.Series, low: pd.Series, close: pd.Series, period: int = 14):

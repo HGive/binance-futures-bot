@@ -10,13 +10,14 @@ import math
 from pathlib import Path
 
 import pandas as pd
-import numpy as np
 
 # 프로젝트 루트 추가
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
 from modules.module_ema import calc_ema
+from modules.module_rsi import calc_rsi_series
+from modules.module_atr import calc_atr_series
 
 # === 전략 상수 ===
 TIMEFRAME = "15m"
@@ -52,28 +53,6 @@ def calc_buy_unit_enhanced(total_balance: float) -> int:
     base_amount = total_balance * POSITION_SIZE_PCT
     return max(math.floor(base_amount), MIN_BUY_UNIT)
 
-
-def calc_rsi_series(close: pd.Series, period: int = 14) -> pd.Series:
-    """봉별 RSI 시리즈 (백테스트용)"""
-    delta = close.diff()
-    gains = delta.clip(lower=0)
-    losses = (-delta).clip(lower=0)
-    _gain = gains.ewm(com=(period - 1), min_periods=period).mean()
-    _loss = losses.ewm(com=(period - 1), min_periods=period).mean()
-    rs = _gain / _loss.replace(0, np.nan)
-    rsi = 100 - (100 / (1 + rs))
-    return rsi
-
-
-def calc_atr_series(high: pd.Series, low: pd.Series, close: pd.Series, period: int = 14) -> pd.Series:
-    """ATR (Average True Range) 시리즈"""
-    prev_close = close.shift(1)
-    tr1 = high - low
-    tr2 = (high - prev_close).abs()
-    tr3 = (low - prev_close).abs()
-    tr = pd.concat([tr1, tr2, tr3], axis=1).max(axis=1)
-    atr = tr.ewm(span=period, adjust=False).mean()
-    return atr
 
 
 def detect_trend(price: float, ema20: pd.Series, ema120: pd.Series, idx: int) -> str:
