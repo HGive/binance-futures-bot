@@ -10,7 +10,8 @@ import pandas as pd
 import ccxt
 
 CACHE_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "data", "ohlcv")
-TF_MS = {"1h": 3600_000, "4h": 14400_000, "1d": 86400_000, "15m": 900_000}
+TF_MS = {"1m": 60_000, "5m": 300_000, "15m": 900_000, "1h": 3600_000,
+         "4h": 14400_000, "1d": 86400_000}
 
 _exchange = None
 
@@ -22,6 +23,9 @@ def get_exchange():
             "enableRateLimit": True,
             "options": {"fetchCurrencies": False},
         })
+        # klines(limit=1000) 는 요청당 weight 10, IP 한도 분당 2400.
+        # 300ms 간격이면 분당 200요청 = weight 2000 으로 여유가 있다.
+        _exchange.rateLimit = 300
         _exchange.load_markets()
     return _exchange
 
@@ -31,9 +35,9 @@ def _cache_path(symbol: str, timeframe: str) -> str:
     return os.path.join(CACHE_DIR, f"{safe}_{timeframe}.csv")
 
 
-def fetch_ohlcv_paged(symbol: str, timeframe: str, since_ms: int, until_ms: int | None = None) -> pd.DataFrame:
+def fetch_ohlcv_paged(symbol: str, timeframe: str, since_ms: int, until_ms: int | None = None, ex=None) -> pd.DataFrame:
     """since 부터 현재까지 1000봉씩 페이징 수집."""
-    ex = get_exchange()
+    ex = ex or get_exchange()
     step = TF_MS[timeframe]
     until_ms = until_ms or ex.milliseconds()
     out, cursor = [], since_ms
@@ -45,7 +49,8 @@ def fetch_ohlcv_paged(symbol: str, timeframe: str, since_ms: int, until_ms: int 
             except Exception as e:
                 if attempt == 3:
                     raise
-                time.sleep(2 * (attempt + 1))
+                # 429(요청 초과)는 넉넉히 쉬었다 재시도
+                time.sleep(15 * (attempt + 1) if "429" in str(e) else 2 * (attempt + 1))
         if not batch:
             break
         out.extend(batch)
@@ -62,16 +67,16 @@ def fetch_ohlcv_paged(symbol: str, timeframe: str, since_ms: int, until_ms: int 
     return df
 
 
-def load(symbol: str, timeframe: str = "4h", years: float = 2.5, refresh: bool = False) -> pd.DataFrame:
+def load(symbol: str, timeframe: str = "4h", years: float = 2.5, refresh: bool = False, ex=None) -> pd.DataFrame:
     """캐시가 있으면 읽고, 없으면 수집 후 저장."""
     os.makedirs(CACHE_DIR, exist_ok=True)
     path = _cache_path(symbol, timeframe)
     if os.path.exists(path) and not refresh:
         df = pd.read_csv(path)
     else:
-        ex = get_exchange()
+        ex = ex or get_exchange()
         since = ex.milliseconds() - int(years * 365 * 86400_000)
-        df = fetch_ohlcv_paged(symbol, timeframe, since)
+        df = fetch_ohlcv_paged(symbol, timeframe, since, ex=ex)
         if len(df):
             df.to_csv(path, index=False)
     if len(df):
@@ -96,20 +101,51 @@ def liquid_universe(top_n: int = 150, min_quote_vol: float = 5_000_000) -> list[
     return [s for s, _ in rows[:top_n]]
 
 
+def _worker_exchange():
+    """스레드마다 별도 인스턴스 — ccxt 인스턴스는 스레드 안전하지 않다."""
+    ex = ccxt.binanceusdm({"enableRateLimit": True, "options": {"fetchCurrencies": False}})
+    # klines(limit=1000) 는 요청당 weight 10, IP 한도는 분당 2400.
+    # 워커 수 x (1000/rateLimit) x 10 이 2400 을 넘지 않게 잡는다.
+    ex.rateLimit = 600
+    ex.load_markets()
+    return ex
+
+
 if __name__ == "__main__":
     import argparse
+    from concurrent.futures import ThreadPoolExecutor
+    import threading
+
     ap = argparse.ArgumentParser()
     ap.add_argument("--timeframe", default="4h")
     ap.add_argument("--years", type=float, default=2.5)
     ap.add_argument("--top", type=int, default=150)
+    ap.add_argument("--workers", type=int, default=1)
     args = ap.parse_args()
 
     syms = liquid_universe(args.top)
-    print(f"universe: {len(syms)} symbols")
-    for i, s in enumerate(syms, 1):
+    print(f"universe: {len(syms)} symbols, workers={args.workers}", flush=True)
+    local = threading.local()
+    done = [0]
+    lock = threading.Lock()
+
+    def job(item):
+        i, sym = item
         try:
-            df = load(s, args.timeframe, args.years)
+            if not hasattr(local, "ex"):
+                local.ex = _worker_exchange()
+            df = load(sym, args.timeframe, args.years, ex=local.ex)
             span = f"{df['dt'].iloc[0].date()} ~ {df['dt'].iloc[-1].date()}" if len(df) else "EMPTY"
-            print(f"[{i}/{len(syms)}] {s:28s} {len(df):6d} bars  {span}", flush=True)
+            msg = f"{sym:28s} {len(df):6d} bars  {span}"
         except Exception as e:
-            print(f"[{i}/{len(syms)}] {s:28s} FAIL {type(e).__name__}: {e}", flush=True)
+            msg = f"{sym:28s} FAIL {type(e).__name__}: {e}"
+        with lock:
+            done[0] += 1
+            print(f"[{done[0]}/{len(syms)}] {msg}", flush=True)
+
+    if args.workers <= 1:
+        for it in enumerate(syms, 1):
+            job(it)
+    else:
+        with ThreadPoolExecutor(max_workers=args.workers) as pool:
+            list(pool.map(job, enumerate(syms, 1)))
