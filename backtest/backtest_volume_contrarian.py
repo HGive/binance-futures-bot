@@ -45,11 +45,13 @@ DI_DIFF_THRESHOLD = 10    # |DI+−DI-| > 10 이면 방향성 있다고 판단
 
 # === Volume Spike 설정 ===
 VOLUME_LOOKBACK = 5
-VOLUME_MULT = 2.0
+VOLUME_MULT = 2.0          # 볼륨 배수 기준
 MAX_TP_PCT = 0.05          # 전체 TP 거리 > 5% 이면 스킵
+MIN_TP_PCT = 0.005         # 전체 TP 거리 < 0.5% 이면 스킵 (극소형 캔들 제거)
+MIN_BODY_ATR_RATIO = 0.2   # 캔들 바디 < ATR×0.2 이면 스킵 (도지 제거)
 
 # === 청산 ===
-SL_ATR_MULT = 2.5
+SL_PCT = 0.012             # 고정 SL: entry의 1.2% → R:R 안정화
 PARTIAL_TP_RATIO = 0.50    # 부분 익절 비율 (50%)
 TIME_STOP_BARS = 8         # 8봉 후 수익 없으면 강제 청산
 
@@ -279,6 +281,13 @@ def run_backtest(df: pd.DataFrame, initial_balance: float = INITIAL_BALANCE) -> 
 
         is_bullish = c > o
         is_bearish = c < o
+
+        # 최소 바디 크기 필터: 도지/스피닝탑 제거
+        body = abs(c - o)
+        if body < atr * MIN_BODY_ATR_RATIO:
+            equity.append(balance)
+            continue
+
         size = buy_unit * LEVERAGE / c
 
         # DI 방향 판단
@@ -287,16 +296,15 @@ def run_backtest(df: pd.DataFrame, initial_balance: float = INITIAL_BALANCE) -> 
         downtrend = di_diff < -DI_DIFF_THRESHOLD  # DI- 우세 → 하락 추세
 
         if is_bullish:
-            # 양봉 스파이크 → Short
-            # 상승추세에선 추세 방향 스파이크 → 진입 스킵
+            # 양봉 스파이크 → Short (상승추세 방향 스파이크 스킵)
             if uptrend:
                 equity.append(balance)
                 continue
-            full_tp = l       # 전체 TP: 캔들 저가
-            partial_tp = o    # 부분 TP: 캔들 시가 (절반 먼저)
-            sl_price = c + atr * SL_ATR_MULT
+            full_tp = l
+            partial_tp = o
+            sl_price = c * (1 + SL_PCT)          # 고정 % SL
             tp_dist = (c - full_tp) / c
-            if tp_dist <= MAX_TP_PCT and partial_tp < c:  # 시가가 종가보다 낮아야 의미있음
+            if MIN_TP_PCT <= tp_dist <= MAX_TP_PCT and partial_tp < c:
                 position = {
                     "side": "short", "entry_price": c, "size": size,
                     "full_tp": full_tp, "partial_tp": partial_tp,
@@ -304,16 +312,15 @@ def run_backtest(df: pd.DataFrame, initial_balance: float = INITIAL_BALANCE) -> 
                 }
 
         elif is_bearish:
-            # 음봉 스파이크 → Long
-            # 하락추세에선 추세 방향 스파이크 → 진입 스킵
+            # 음봉 스파이크 → Long (하락추세 방향 스파이크 스킵)
             if downtrend:
                 equity.append(balance)
                 continue
-            full_tp = h       # 전체 TP: 캔들 고가
-            partial_tp = o    # 부분 TP: 캔들 시가
-            sl_price = c - atr * SL_ATR_MULT
+            full_tp = h
+            partial_tp = o
+            sl_price = c * (1 - SL_PCT)          # 고정 % SL
             tp_dist = (full_tp - c) / c
-            if tp_dist <= MAX_TP_PCT and partial_tp > c:  # 시가가 종가보다 높아야 의미있음
+            if MIN_TP_PCT <= tp_dist <= MAX_TP_PCT and partial_tp > c:
                 position = {
                     "side": "long", "entry_price": c, "size": size,
                     "full_tp": full_tp, "partial_tp": partial_tp,
@@ -356,11 +363,11 @@ def print_summary(trades: list, equity: pd.Series, initial: float, final: float,
     print("  Volume Contrarian v2 - 볼륨 스파이크 역추세 전략")
     print("=" * 60)
     print(f"  타임프레임     : {tf}")
-    print(f"  Volume 조건    : 직전 {VOLUME_LOOKBACK}봉 평균 × {VOLUME_MULT}배")
+    print(f"  Volume 조건    : 직전 {VOLUME_LOOKBACK}봉 평균 × {VOLUME_MULT}배 / 바디 ≥ ATR×{MIN_BODY_ATR_RATIO}")
     print(f"  DI 방향 필터   : |DI+−DI-| > {DI_DIFF_THRESHOLD} 시 추세 방향 스파이크 스킵")
     print(f"  부분 익절      : 시가(open)에서 {PARTIAL_TP_RATIO*100:.0f}% → SL 본전이동")
     print(f"  전체 익절      : 신호봉 저가/고가, 최대 {MAX_TP_PCT*100:.0f}%")
-    print(f"  SL             : entry ± ATR × {SL_ATR_MULT}")
+    print(f"  SL             : entry ± {SL_PCT*100:.1f}% (고정 비율)")
     print(f"  타임스탑       : {TIME_STOP_BARS}봉 수익 없으면 청산")
     print(f"  수수료         : 왕복 {COMMISSION_RATE*2*100:.2f}% 반영")
     print("-" * 60)
