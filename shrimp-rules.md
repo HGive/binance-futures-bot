@@ -1,4 +1,6 @@
-# Development Guidelines
+# Development Guidelines (코드 컨벤션)
+
+> 전략 설계·백테스트·배포 규칙은 **[STRATEGY_RULES.md](STRATEGY_RULES.md)** 를 따른다. 이 문서는 코드 작성 규칙만 다룬다.
 
 ## 1. 프로젝트 개요
 
@@ -8,7 +10,7 @@
 | 언어 | Python 3.11+ |
 | 핵심 라이브러리 | ccxt.pro (async), pandas, asyncio |
 | 거래소 | Binance Futures (USDT-M) |
-| 환경 | Testnet / Production (`.env`로 분리) |
+| 환경 | Production 전용 (**Testnet 분기 미구현 — 복구 필요**) |
 
 ---
 
@@ -18,18 +20,18 @@
 binance-futures-bot/
 ├── main.py              # 엔트리포인트 - 전략 루프 실행
 ├── config.py            # 환경설정, exchange 인스턴스 생성
-├── strategies/          # 매매 전략 클래스들
-│   ├── hour_3p_strategy.py
-│   └── min15_3p_strategy.py
+├── strategies/          # 매매 전략 클래스들 (main에는 기본 전략 1개)
+│   └── trailing_atr.py
 ├── modules/             # 기술지표 계산 모듈
 │   ├── module_common.py  # 공통 유틸 (calc_buy_unit 등)
+│   ├── module_atr.py
+│   ├── module_bb.py
 │   ├── module_ema.py
 │   ├── module_ma.py
 │   ├── module_rsi.py
 │   └── module_stochrsi.py
 ├── .cursor/rules/       # AI Agent 룰 파일
-│   ├── positions-example.mdc    # 포지션 데이터 구조
-│   └── ccxt-binance-functions.mdc  # CCXT 함수 사용법
+│   └── positions-example.mdc    # 포지션 데이터 구조
 └── .env                 # API 키 (gitignore)
 ```
 
@@ -122,8 +124,8 @@ STOP_LOSS_PCT = -0.05       # -5%
 
 ### 필수 참조 문서
 
-- **CCXT 함수 사용법**: `.cursor/rules/ccxt-binance-functions.mdc` 참조
 - **포지션 데이터 구조**: `.cursor/rules/positions-example.mdc` 참조
+- **전략/백테스트 규칙**: [STRATEGY_RULES.md](STRATEGY_RULES.md) 참조
 
 ### 주요 CCXT 함수
 
@@ -154,19 +156,21 @@ if position:
 
 ### 새 전략 개발 플로우
 
-1. `strategies/` 폴더에 새 전략 파일 생성
-2. 전략 클래스 구현 (`setup()` + `run_once()`)
-3. `main.py`에 전략 import 및 SYMBOLS 설정
-4. **Testnet에서 테스트** (`TEST_NET=TRUE`)
-5. Production 배포
+1. `main`에서 `devN` 브랜치 분기
+2. `strategies/` 폴더에 새 전략 파일 생성 (상수 + 순수 신호 함수 + 실행 클래스)
+3. `backtest/` 에 백테스트 작성 — 전략 파일에서 상수/함수를 **import**
+4. [STRATEGY_RULES.md](STRATEGY_RULES.md) 4~5절 기준으로 검증 + 리포트 커밋
+5. `main.py`에 전략 import 및 SYMBOLS 설정
+6. **Testnet에서 테스트** (`TEST_NET=TRUE`)
+7. 소액 실전 → Production 배포
 
 ### 테스트 플로우
 
+> ⚠️ 현재 `config.py`에 `TEST_NET` 분기가 없어 **프로덕션으로만 실행된다.**
+> [STRATEGY_RULES.md](STRATEGY_RULES.md) 6절이 요구하는 테스트넷 관문을 쓰려면 먼저 이 분기를 복구해야 한다.
+
 ```bash
-# 1. .env에서 TEST_NET=TRUE 설정
-# 2. 실행
-python main.py
-# 3. 로그 확인 (콘솔 출력)
+# (복구 후) .env에서 TEST_NET=TRUE 설정 → python main.py → 로그 확인
 ```
 
 ---
@@ -210,7 +214,8 @@ strategies = [NewStrategy(exchange, symbol) for symbol in SYMBOLS]
 ### 테스트 우선 원칙
 
 1. **항상 Testnet 먼저** - Production 직접 배포 금지
-2. 로그로 동작 확인 후 Production 배포
+2. 로그로 동작 확인 → 소액 실전 → Production 배포
+3. 상세 관문은 [STRATEGY_RULES.md](STRATEGY_RULES.md) 6절
 
 ---
 

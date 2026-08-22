@@ -2,6 +2,12 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+## 필독
+
+전략을 만들거나 수정하기 전에 **[STRATEGY_RULES.md](STRATEGY_RULES.md)** 를 먼저 읽는다.
+매매 원칙, 자본 배분 한도, 백테스트 요건, 통과 기준, 배포 관문이 전부 거기 있다.
+코드 컨벤션은 [shrimp-rules.md](shrimp-rules.md).
+
 ## Overview
 
 Binance 선물 거래 자동매매 봇. `ccxt` 라이브러리를 통해 Binance Futures API와 통신하며, 기술적 지표(RSI, StochRSI, EMA, MA) 기반 스코어링으로 롱/숏 진입 신호를 판단한다.
@@ -39,6 +45,7 @@ BINANCE_API_SECRET=...
 - **`data_structure/`** — API 응답 데이터 구조 예시 JSON
 - **`.cursor/rules/`** — Cursor 규칙 (positions 데이터 구조 참조)
 - **`strategies/`** — 실제 전략 코드 (`main`에는 기본 전략 하나만 유지)
+- **`backtest/`** — 백테스트 코드 (개발 브랜치에만 존재)
 - **`docs/`** — 배포 가이드 등 문서
 
 ### 핵심 모듈 (`modules/`)

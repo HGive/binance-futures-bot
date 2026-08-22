@@ -18,6 +18,10 @@ poetry install
 nano .env
 # API 키 입력
 
+## 전략 규칙
+
+전략 개발·검증·배포 규칙은 [STRATEGY_RULES.md](STRATEGY_RULES.md) 참고.
+
 ## 브랜치 운영 방식
 
 전략은 브랜치 단위로 관리한다.
