@@ -38,8 +38,8 @@ BINANCE_API_SECRET=...
 - **`prac/`** — 실험/연습용 스크립트 (프로덕션 코드 아님)
 - **`data_structure/`** — API 응답 데이터 구조 예시 JSON
 - **`.cursor/rules/`** — Cursor 규칙 (positions 데이터 구조 참조)
-- **`backtest/`** — 백테스트 관련 코드
-- **`strategies/`** — 실제 전략 관련 코드
+- **`strategies/`** — 실제 전략 코드 (`main`에는 기본 전략 하나만 유지)
+- **`docs/`** — 배포 가이드 등 문서
 
 ### 핵심 모듈 (`modules/`)
 
@@ -89,3 +89,14 @@ exchange = ccxt.binance(config={
 - `marginMode`: `"isolated"` (격리 마진 사용)
 
 전체 예시는 [data_structure/positions.json](data_structure/positions.json) 참조.
+
+## 브랜치 운영 방식
+
+전략은 브랜치 단위로 관리한다.
+
+- `main` — 공용 골격(`config.py`, `modules/`, `main.py`) + 기본 전략 하나(`strategies/trailing_atr.py`). 백테스트 코드는 두지 않는다.
+- `dev1`, `dev2`, ... — 신규 전략 개발 브랜치. `main`에서 분기해 전략 파일과 백테스트를 추가한다.
+- `testing` — 이전에 혼재돼 있던 전략/백테스트 스냅샷 보관용.
+
+전략별 코드와 백테스트는 각 개발 브랜치 안에서만 유지하고, `main`으로는
+공용 모듈 변경과 채택된 기본 전략만 반영한다.
