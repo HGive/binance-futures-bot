@@ -71,7 +71,11 @@ def signal_mask(pre, daily, sym, drought, pos_max, min_spikes):
     with np.errstate(invalid="ignore", divide="ignore"):
         tgt = np.clip(P["tp_base"] * S.TP_FRACTION, S.TP_MIN, S.TP_MAX)
         ratio = tgt / P["reach"]
-        m = ((P["spike_cnt"] >= min_spikes) &
+        atl_ok = (np.ones(len(c), dtype=bool) if S.ATL_TOL is None
+                  else ((c <= P["atl"] * (1 + S.ATL_TOL)) &
+                        (P["atl_age"] >= S.MIN_ATL_AGE)))
+        m = (atl_ok &
+             (P["spike_cnt"] >= min_spikes) &
              (c <= P["year_ago"] * S.NOT_UP_MAX) &
              (P["qv30"] >= S.MIN_DAILY_QUOTE_VOL) &
              (P["drought"] >= drought) &
@@ -82,12 +86,13 @@ def signal_mask(pre, daily, sym, drought, pos_max, min_spikes):
 
 class Pos:
     __slots__ = ("sym", "qty", "avg", "entry", "margin", "budget", "added",
-                 "open_i", "open_ts", "tp_px", "sl_px")
+                 "open_i", "open_ts", "tp_px", "sl_px", "runner")
     def __init__(self, sym, qty, entry, margin, budget, open_i, open_ts, tp_px=None, sl_px=None):
         self.sym, self.qty, self.avg, self.entry = sym, qty, entry, entry
         self.margin, self.budget, self.added = margin, budget, False
         self.open_i, self.open_ts = open_i, open_ts
         self.tp_px, self.sl_px = tp_px, sl_px      # 진입 시점에 확정 (종목별 목표)
+        self.runner = False                        # 1차 목표에서 일부만 팔고 남은 물량인가
 
 
 def simulate(symbols, daily, pre, dates, a, b, masks, regime, cash=1000.0,
@@ -135,7 +140,23 @@ def simulate(symbols, daily, pre, dates, a, b, masks, regime, cash=1000.0,
             if stop_px is not None and lo <= stop_px and (p.added or not STYLE["add"]):
                 reason, px = "STOP", min(stop_px, op)
             elif hi >= tp_px:
-                reason, px = "TP", tp_px
+                # 1차 목표: 일부만 팔고 나머지는 2배까지 끌고 간다 (SPLIT_AT_FIRST < 1 일 때)
+                if STYLE["adaptive_tp"] and not p.runner and S.SPLIT_AT_FIRST < 1.0:
+                    sell_q = p.qty * S.SPLIT_AT_FIRST
+                    if sell_q > 0:
+                        fill = tp_px * (1 - S.SLIPPAGE)
+                        part = sell_q * (fill - p.avg) - sell_q * fill * S.FEE_RATE
+                        cash += p.margin * S.SPLIT_AT_FIRST + part
+                        trades.append({"symbol": sym, "exit_ts": today, "reason": "TP1",
+                                       "hold_days": int((today-p.open_ts)/np.timedelta64(1,"D")),
+                                       "margin": p.margin*S.SPLIT_AT_FIRST, "pnl": part,
+                                       "roi": part/(p.margin*S.SPLIT_AT_FIRST)})
+                        p.qty -= sell_q
+                        p.margin *= (1 - S.SPLIT_AT_FIRST)
+                    p.runner = True
+                    p.tp_px = p.entry * (1 + S.DOUBLE_TP)      # 남은 물량은 2배 목표
+                    continue
+                reason, px = ("TP2" if p.runner else "TP"), tp_px
             if reason:
                 fill = px * (1 - S.SLIPPAGE)
                 pnl = max(p.qty*(fill-p.avg) - p.qty*fill*S.FEE_RATE, -p.margin)
@@ -216,6 +237,9 @@ if __name__ == "__main__":
     ap.add_argument("--ticker-pct", type=float, default=None)
     ap.add_argument("--max-concurrent", type=int, default=None)
     ap.add_argument("--min-vol", type=float, default=None)
+    ap.add_argument("--atl-tol", type=float, default=None, help="상장 이후 최저가 대비 +N 이내")
+    ap.add_argument("--split-first", type=float, default=None, help="1차 목표에서 파는 비중")
+    ap.add_argument("--atl-age", type=int, default=None, help="최저가가 며칠 전 것이어야 하는가")
     args = ap.parse_args()
 
     globals()["STYLE"] = EXIT_STYLES[args.style]
@@ -233,6 +257,12 @@ if __name__ == "__main__":
         S.MAX_CONCURRENT = args.max_concurrent
     if args.min_vol is not None:
         S.MIN_DAILY_QUOTE_VOL = args.min_vol
+    if args.atl_tol is not None:
+        S.ATL_TOL = args.atl_tol
+    if args.atl_age is not None:
+        S.MIN_ATL_AGE = args.atl_age
+    if args.split_first is not None:
+        S.SPLIT_AT_FIRST = args.split_first
     symbols, daily = load_all(market="spot")
     pre = base_arrays(symbols, daily)
     dates = np.array(sorted(set(np.concatenate([daily[s]["dt"].values for s in symbols]))))
@@ -240,7 +270,7 @@ if __name__ == "__main__":
     last_day = {s: daily[s]["dt"].values[-1] for s in symbols}
     drought_arr = {s: pre[s]["drought"] for s in symbols}
     regs = regime_maps(symbols, daily, dates)
-    print(f"[레짐 {args.regime} / 구조 {args.style} / 목표배수 {S.TP_FRACTION} / 손절 {S.STOP_PCT:.0%} / 자리 {S.MIN_TGT_RATIO}~{S.MAX_TGT_RATIO}] 심볼 {len(symbols)}종 | 전체 {pd.Timestamp(dates[0]).date()} ~ {pd.Timestamp(dates[-1]).date()}")
+    print(f"[자리 {S.MIN_TGT_RATIO}~{S.MAX_TGT_RATIO} / 역사적저점 {S.ATL_TOL} / 1차매도 {S.SPLIT_AT_FIRST:.0%}] 심볼 {len(symbols)}종 | 전체 {pd.Timestamp(dates[0]).date()} ~ {pd.Timestamp(dates[-1]).date()}")
 
     REGS = (["none", "btc_ma100", "btc_ma200", "breadth25", "breadth40"]
             if args.regime == "auto" else [args.regime])

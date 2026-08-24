@@ -43,6 +43,11 @@ MIN_DAILY_QUOTE_VOL = 1e6    # 일 거래대금 하한. 500만→100만 으로 �
 # =====================================================================
 MIN_DROUGHT_DAYS = 90        # 마지막 슈팅 이후 최소 이만큼 조용할 것
 MAX_PRICE_POS = 0.35         # 1년 고저 범위의 하위 35% 안에 있을 것
+ATL_TOL = None               # 상장 이후 최저가 대비 +몇 % 이내에서만 살 것인가
+                             # None 이면 이 조건을 쓰지 않는다
+MIN_ATL_AGE = 0              # 그 최저가가 며칠 전에 만들어진 것이어야 하는가
+                             # 0  → 신저가 갱신 중인 것도 허용 (= 떨어지는 칼)
+                             # 90 → 예전에 찍은 바닥에 '다시 내려온' 것만 (= 지지선 재방문)
 
 # =====================================================================
 #  포지션 운용 — 현물 (spot)
@@ -62,6 +67,12 @@ FIRST_ENTRY_FRAC = 1.0       # 물타기 없음 — 처음부터 전액
 ADD_TRIGGER_ROI = -0.233     # (미사용, 참고용)
 STOP_ROI_AFTER_ADD = -0.233  # (미사용, 참고용)
 TAKE_PROFIT_ROI = 0.33       # (미사용) 목표는 target_gain() 으로 종목마다 따로 잡는다
+DOUBLE_TP = 1.00             # 두 번째 목표: 가격 2배 (+100%)
+SPLIT_AT_FIRST = 0.7         # 1차 목표에서 70% 매도, 남은 30% 는 2배까지 끌고 간다
+                             # 전량 매도 대비: 총수익 +153%→+124% 로 낮아지지만
+                             #   MDD -27.2%→-23.6%, PF 1.73→2.09, 수익구간 11→12/24,
+                             #   탐색 미사용 구간 +18.9%→+31.3% 로 개선된다.
+                             # 러너가 자본을 계속 굴려 동시보유도 1.95→3.15 종목으로 늘어난다.
 REGIME_MA_DAYS = 100         # BTC 100일선 아래에서는 신규 진입 안 함
                              # 필터를 성적 보고 켜고 끄면 항상 늦는다. 상시 켜둔다.
 
@@ -213,6 +224,15 @@ def precompute(d: pd.DataFrame) -> dict:
         swing = rmax / rmin - 1
     reach = pd.Series(swing).rolling(YEAR_WINDOW).median().values
 
+    atl = np.minimum.accumulate(lo)          # 상장 이후 최저가 (그날까지의 사실)
+    # 그 최저가가 언제 만들어졌는지 → 신저가 갱신 중인지, 옛 바닥에 다시 온 건지 구분
+    atl_age = np.zeros(n, dtype=int)
+    last_new = 0
+    for k in range(n):
+        if lo[k] <= atl[k]:
+            last_new = k
+        atl_age[k] = k - last_new
+
     roll_lo = pd.Series(lo).rolling(YEAR_WINDOW).min().values
     roll_hi = pd.Series(hi).rolling(YEAR_WINDOW).max().values
     with np.errstate(invalid="ignore", divide="ignore"):
@@ -220,7 +240,7 @@ def precompute(d: pd.DataFrame) -> dict:
     year_ago = np.full(n, np.nan)
     year_ago[YEAR_WINDOW:] = c[:-YEAR_WINDOW]
     return {"spike_cnt": cnt, "drought": drought, "pos": pos, "tp_base": tp_base,
-            "reach": reach, "year_ago": year_ago,
+            "reach": reach, "year_ago": year_ago, "atl": atl, "atl_age": atl_age,
             "qv30": d["qv"].rolling(30).median().values}
 
 
@@ -251,13 +271,17 @@ def scan_ok(pre: dict, close_i: float, i: int) -> bool:
     return not (np.isnan(q) or q < MIN_DAILY_QUOTE_VOL)
 
 
-def entry_signal(pre: dict, i: int) -> bool:
+def entry_signal(pre: dict, i: int, close_i: float = None) -> bool:
     """지금 들어갈 자리인가 — 조용해졌고, 가격도 낮고, 목표가 갈 만한 거리인가."""
     if pre["drought"][i] < MIN_DROUGHT_DAYS:
         return False
     p = pre["pos"][i]
     if np.isnan(p) or p > MAX_PRICE_POS:
         return False
+    if ATL_TOL is not None and close_i is not None:
+        a = pre["atl"][i]
+        if not (a > 0 and close_i <= a * (1 + ATL_TOL)):
+            return False    # 상장 이후 최저가 부근이 아니면 안 산다
     r = tgt_ratio(pre, i)
     return bool(not np.isnan(r) and MIN_TGT_RATIO <= r <= MAX_TGT_RATIO)
 
