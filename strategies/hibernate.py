@@ -287,16 +287,23 @@ def scan_ok(pre: dict, close_i: float, i: int) -> bool:
     return not (np.isnan(q) or q < MIN_DAILY_QUOTE_VOL)
 
 
-def entry_signal(pre: dict, i: int, close_i: float = None) -> bool:
-    """지금 들어갈 자리인가 — 조용해졌고, 가격도 낮고, 목표가 갈 만한 거리인가."""
+def entry_signal(pre: dict, i: int, close_i: float) -> bool:
+    """지금 들어갈 자리인가.
+
+    종목 자격(scan_ok) + 타이밍을 모두 본다.
+    이 함수가 진입 판정의 유일한 출처다 — 백테스트의 signal_mask 는
+    같은 결과를 내는 벡터 버전이고, tests/test_signal_parity.py 가 둘을 대조한다.
+    """
+    if not scan_ok(pre, close_i, i):
+        return False
     if pre["drought"][i] < MIN_DROUGHT_DAYS:
         return False
     p = pre["pos"][i]
     if np.isnan(p) or p > MAX_PRICE_POS:
         return False
-    if ATL_TOL is not None and close_i is not None:
+    if ATL_TOL is not None:
         a = pre["atl"][i]
-        if not (a > 0 and close_i <= a * (1 + ATL_TOL)):
+        if not (a > 0 and close_i <= a * (1 + ATL_TOL) and pre["atl_age"][i] >= MIN_ATL_AGE):
             return False    # 상장 이후 최저가 부근이 아니면 안 산다
     r = tgt_ratio(pre, i)
     return bool(not np.isnan(r) and MIN_TGT_RATIO <= r <= MAX_TGT_RATIO)

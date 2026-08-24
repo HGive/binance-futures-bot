@@ -70,12 +70,28 @@ def fetch_ohlcv_paged(symbol: str, timeframe: str, since_ms: int, until_ms: int 
     return df
 
 
-def load(symbol: str, timeframe: str = "4h", years: float = 2.5, refresh: bool = False, ex=None) -> pd.DataFrame:
-    """캐시가 있으면 읽고, 없으면 수집 후 저장."""
+def load(symbol: str, timeframe: str = "4h", years: float = 2.5, refresh: bool = False,
+         ex=None, topup: bool = False) -> pd.DataFrame:
+    """캐시가 있으면 읽고, 없으면 수집 후 저장.
+
+    topup=True 면 캐시 마지막 봉 이후를 이어받아 최신으로 만든다.
+    실전 봇은 반드시 topup=True 로 쓴다 — 안 그러면 옛날 데이터로 매매한다.
+    """
     os.makedirs(CACHE_DIR, exist_ok=True)
     path = _cache_path(symbol, timeframe)
     if os.path.exists(path) and not refresh:
         df = pd.read_csv(path)
+        if topup and len(df):
+            ex = ex or get_exchange()
+            step = TF_MS[timeframe]
+            last = int(df["timestamp"].iloc[-1])
+            if ex.milliseconds() - last > step:          # 마지막 봉 이후가 남아 있다
+                new = fetch_ohlcv_paged(symbol, timeframe, last, ex=ex)
+                if len(new):
+                    df = (pd.concat([df, new], ignore_index=True)
+                            .drop_duplicates("timestamp", keep="last")
+                            .sort_values("timestamp").reset_index(drop=True))
+                    df.to_csv(path, index=False)
     else:
         ex = ex or get_exchange()
         since = ex.milliseconds() - int(years * 365 * 86400_000)
@@ -115,7 +131,7 @@ def _worker_exchange():
     ex = cls({"enableRateLimit": True, "options": {"fetchCurrencies": False}})
     # klines(limit=1000) 는 요청당 weight 10, IP 한도는 분당 2400.
     # 워커 수 x (1000/rateLimit) x 10 이 2400 을 넘지 않게 잡는다.
-    ex.rateLimit = 600
+    ex.rateLimit = int(os.environ.get("RATELIMIT", 400))
     ex.load_markets()
     return ex
 
