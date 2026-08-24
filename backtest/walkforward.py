@@ -64,6 +64,34 @@ def base_arrays(symbols, daily):
     return {s: S.precompute(daily[s]) for s in symbols}
 
 
+def uptrend_dip_mask(pre, daily, sym, pos_max=0.12, min_ret=0.15, min_vol=0.05):
+    """
+    두 번째 자리 — '상승 추세인데 깊게 눌린 것'.
+
+    첫 번째 전략(spike_drought)은 1년 전 대비 오르지 않은 종목만 본다.
+    여기는 정확히 그 반대편 — 1년으로 보면 올랐는데 지금은 1년 범위 바닥에 있는 자리다.
+    두 전략은 조건상 겹치지 않는다.
+
+    차트 모양 지도(docs/pattern_map)에서 기대값 +5.9~6.6% 로 가장 높았던 칸이다.
+    """
+    P = pre[sym]
+    d = daily[sym]
+    c = d["close"].values
+    n = len(c)
+    ret1y = np.full(n, np.nan)
+    ret1y[365:] = c[365:] / c[:-365] - 1
+    vol90 = d["close"].pct_change().rolling(90).std().values
+    with np.errstate(invalid="ignore", divide="ignore"):
+        tgt = np.clip(P["tp_base"] * S.TP_FRACTION, S.TP_MIN, S.TP_MAX)
+        ratio = tgt / P["reach"]
+        m = ((ret1y >= min_ret) &
+             (P["pos"] <= pos_max) &
+             (vol90 >= min_vol) &
+             (P["qv30"] >= S.MIN_DAILY_QUOTE_VOL) &
+             (ratio >= S.MIN_TGT_RATIO) & (ratio <= S.MAX_TGT_RATIO))
+    return np.nan_to_num(m, nan=0).astype(bool)
+
+
 def signal_mask(pre, daily, sym, drought, pos_max, min_spikes):
     """파라미터에 따른 진입 가능일 불리언 배열 (레짐 제외)."""
     P = pre[sym]
@@ -137,8 +165,11 @@ def simulate(symbols, daily, pre, dates, a, b, masks, regime, cash=1000.0,
                 sf = STYLE["stop_from_avg"]
                 stop_px = p.avg * (1 + sf) if sf is not None else None
                 tp_px = S.take_profit_price(p.avg)
+            held = int((today - p.open_ts) / np.timedelta64(1, "D"))
             if stop_px is not None and lo <= stop_px and (p.added or not STYLE["add"]):
                 reason, px = "STOP", min(stop_px, op)
+            elif S.MAX_HOLD_DAYS and held >= S.MAX_HOLD_DAYS:
+                reason, px = "TIME", row["close"]      # 오래 묶인 자리는 비운다
             elif hi >= tp_px:
                 # 1차 목표: 일부만 팔고 나머지는 2배까지 끌고 간다 (SPLIT_AT_FIRST < 1 일 때)
                 if STYLE["adaptive_tp"] and not p.runner and S.SPLIT_AT_FIRST < 1.0:
@@ -240,6 +271,9 @@ if __name__ == "__main__":
     ap.add_argument("--atl-tol", type=float, default=None, help="상장 이후 최저가 대비 +N 이내")
     ap.add_argument("--split-first", type=float, default=None, help="1차 목표에서 파는 비중")
     ap.add_argument("--atl-age", type=int, default=None, help="최저가가 며칠 전 것이어야 하는가")
+    ap.add_argument("--max-hold", type=int, default=None, help="이 일수 넘게 안 끝나면 정리")
+    ap.add_argument("--strategy", default="drought",
+                    choices=["drought", "uptrend_dip", "both"])
     args = ap.parse_args()
 
     globals()["STYLE"] = EXIT_STYLES[args.style]
@@ -261,6 +295,8 @@ if __name__ == "__main__":
         S.ATL_TOL = args.atl_tol
     if args.atl_age is not None:
         S.MIN_ATL_AGE = args.atl_age
+    if args.max_hold is not None:
+        S.MAX_HOLD_DAYS = args.max_hold
     if args.split_first is not None:
         S.SPLIT_AT_FIRST = args.split_first
     symbols, daily = load_all(market="spot")
@@ -279,9 +315,16 @@ if __name__ == "__main__":
     GRID = list(itertools.product(DROUGHTS, POSES, [2], REGS))
     mask_cache = {}
     def get_masks(dr, pos, sp):
-        key = (dr, pos, sp)
+        key = (dr, pos, sp, args.strategy)
         if key not in mask_cache:
-            mask_cache[key] = {s: signal_mask(pre, daily, s, dr, pos, sp) for s in symbols}
+            if args.strategy == "drought":
+                m = {s: signal_mask(pre, daily, s, dr, pos, sp) for s in symbols}
+            elif args.strategy == "uptrend_dip":
+                m = {s: uptrend_dip_mask(pre, daily, s) for s in symbols}
+            else:                                    # both — 두 자리를 함께 본다
+                m = {s: (signal_mask(pre, daily, s, dr, pos, sp) |
+                         uptrend_dip_mask(pre, daily, s)) for s in symbols}
+            mask_cache[key] = m
         return mask_cache[key]
 
     start = WARMUP
@@ -349,6 +392,13 @@ if __name__ == "__main__":
             print(f"  {nm:<22}: {len(lg):2d}구간  누적 {(mult-1)*100:+7.1f}%  "
                   f"수익구간 {sum(1 for x in lg if x['ret']>0)}/{len(lg)}  "
                   f"거래 {sum(x['trades'] for x in lg)}건")
+        vc = tr.groupby("symbol")["pnl"].agg(["count", "sum"])
+        prof = vc[vc["sum"] > 0]
+        print(f"\n  거래된 심볼 {tr['symbol'].nunique()}종 / 유니버스 {len(symbols)}종")
+        print(f"  수익 심볼 {len(prof)} / 손실 심볼 {int((vc['sum'] <= 0).sum())}")
+        top = prof.nlargest(5, "sum")
+        print(f"  수익 상위 5종이 전체 이익에서 차지: {top['sum'].sum()/prof['sum'].sum()*100:.0f}%  "
+              f"({', '.join(top.index)})")
         print("\n  청산 사유별:")
         for r, g in tr.groupby("reason"):
             print(f"    {r:10s} {len(g):4d}건  합계 {g.pnl.sum():+9.1f}  "
