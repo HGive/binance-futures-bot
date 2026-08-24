@@ -27,10 +27,12 @@ from backtest.spike_drought import load_all, WARMUP  # noqa: E402
 #   add_wide : 절반 진입 → 추매 → 평단 -40%에서 손절                (손절선을 멀리)
 #   add_hold : 절반 진입 → 추매 → 손절 없음, 익절/상폐까지 보유      (손매매 방식에 가장 가까움)
 EXIT_STYLES = {
-    "add_stop": dict(add=True,  first=0.5, stop_from_avg=-0.233),
-    "no_add":   dict(add=False, first=1.0, stop_from_avg=-0.233),
-    "add_wide": dict(add=True,  first=0.5, stop_from_avg=-0.40),
-    "add_hold": dict(add=True,  first=0.5, stop_from_avg=None),
+    "add_stop": dict(add=True,  first=0.5, stop_from_avg=-0.233, adaptive_tp=False),
+    "no_add":   dict(add=False, first=1.0, stop_from_avg=-0.233, adaptive_tp=False),
+    "add_wide": dict(add=True,  first=0.5, stop_from_avg=-0.40,  adaptive_tp=False),
+    "add_hold": dict(add=True,  first=0.5, stop_from_avg=None,   adaptive_tp=False),
+    # 익절 목표를 종목별 과거 슈팅 크기에서 뽑는 방식 (물타기 없음)
+    "adaptive": dict(add=False, first=1.0, stop_from_avg=None,   adaptive_tp=True),
 }
 STYLE = EXIT_STYLES["add_stop"]
 
@@ -76,11 +78,13 @@ def signal_mask(pre, daily, sym, drought, pos_max, min_spikes):
 
 
 class Pos:
-    __slots__ = ("sym", "qty", "avg", "entry", "margin", "budget", "added", "open_i", "open_ts")
-    def __init__(self, sym, qty, entry, margin, budget, open_i, open_ts):
+    __slots__ = ("sym", "qty", "avg", "entry", "margin", "budget", "added",
+                 "open_i", "open_ts", "tp_px", "sl_px")
+    def __init__(self, sym, qty, entry, margin, budget, open_i, open_ts, tp_px=None, sl_px=None):
         self.sym, self.qty, self.avg, self.entry = sym, qty, entry, entry
         self.margin, self.budget, self.added = margin, budget, False
         self.open_i, self.open_ts = open_i, open_ts
+        self.tp_px, self.sl_px = tp_px, sl_px      # 진입 시점에 확정 (종목별 목표)
 
 
 def simulate(symbols, daily, pre, dates, a, b, masks, regime, cash=1000.0,
@@ -119,12 +123,16 @@ def simulate(symbols, daily, pre, dates, a, b, masks, regime, cash=1000.0,
                     p.avg = (p.qty*p.avg + aq*fill)/(p.qty+aq); p.qty += aq; p.margin += add_m
                 p.added = True
             reason = px = None
-            sf = STYLE["stop_from_avg"]
-            stop_px = p.avg * (1 + sf) if sf is not None else None
+            if STYLE["adaptive_tp"]:
+                stop_px, tp_px = p.sl_px, p.tp_px
+            else:
+                sf = STYLE["stop_from_avg"]
+                stop_px = p.avg * (1 + sf) if sf is not None else None
+                tp_px = S.take_profit_price(p.avg)
             if stop_px is not None and lo <= stop_px and (p.added or not STYLE["add"]):
                 reason, px = "STOP", min(stop_px, op)
-            elif hi >= S.take_profit_price(p.avg):
-                reason, px = "TP", S.take_profit_price(p.avg)
+            elif hi >= tp_px:
+                reason, px = "TP", tp_px
             if reason:
                 fill = px * (1 - S.SLIPPAGE)
                 pnl = max(p.qty*(fill-p.avg) - p.qty*fill*S.FEE_RATE, -p.margin)
@@ -162,8 +170,12 @@ def simulate(symbols, daily, pre, dates, a, b, masks, regime, cash=1000.0,
                     continue
                 qty = first * S.LEVERAGE / fill
                 cash -= first + qty*fill*S.FEE_RATE
+                tp_px = sl_px = None
+                if STYLE["adaptive_tp"]:
+                    tp_px = fill * (1 + S.target_gain(pre[sym], i))
+                    sl_px = fill * (1 + S.STOP_PCT)
                 positions[sym] = Pos(sym, qty, fill, first, budget, i+1,
-                                     np.datetime64(nxt["dt"].to_datetime64()))
+                                     np.datetime64(nxt["dt"].to_datetime64()), tp_px, sl_px)
 
         eq = cash
         for s, pp in positions.items():
@@ -192,9 +204,15 @@ if __name__ == "__main__":
                     help="auto=학습구간 성적으로 선택, 그 외에는 해당 레짐으로 고정")
     ap.add_argument("--quiet", action="store_true")
     ap.add_argument("--style", default="add_stop", choices=list(EXIT_STYLES))
+    ap.add_argument("--tp-frac", type=float, default=None, help="과거 슈팅 크기의 몇 배를 목표로")
+    ap.add_argument("--stop", type=float, default=None, help="손절 (예: -0.20)")
     args = ap.parse_args()
 
     globals()["STYLE"] = EXIT_STYLES[args.style]
+    if args.tp_frac is not None:
+        S.TP_FRACTION = args.tp_frac
+    if args.stop is not None:
+        S.STOP_PCT = args.stop
     symbols, daily = load_all(market="spot")
     pre = base_arrays(symbols, daily)
     dates = np.array(sorted(set(np.concatenate([daily[s]["dt"].values for s in symbols]))))
@@ -202,7 +220,7 @@ if __name__ == "__main__":
     last_day = {s: daily[s]["dt"].values[-1] for s in symbols}
     drought_arr = {s: pre[s]["drought"] for s in symbols}
     regs = regime_maps(symbols, daily, dates)
-    print(f"[레짐 {args.regime} / 구조 {args.style}] 심볼 {len(symbols)}종 | 전체 {pd.Timestamp(dates[0]).date()} ~ {pd.Timestamp(dates[-1]).date()}")
+    print(f"[레짐 {args.regime} / 구조 {args.style} / 목표배수 {S.TP_FRACTION} / 손절 {S.STOP_PCT:.0%}] 심볼 {len(symbols)}종 | 전체 {pd.Timestamp(dates[0]).date()} ~ {pd.Timestamp(dates[-1]).date()}")
 
     REGS = (["none", "btc_ma100", "btc_ma200", "breadth25", "breadth40"]
             if args.regime == "auto" else [args.regime])
