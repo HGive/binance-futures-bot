@@ -68,12 +68,15 @@ def signal_mask(pre, daily, sym, drought, pos_max, min_spikes):
     """파라미터에 따른 진입 가능일 불리언 배열 (레짐 제외)."""
     P = pre[sym]
     c = daily[sym]["close"].values
-    with np.errstate(invalid="ignore"):
+    with np.errstate(invalid="ignore", divide="ignore"):
+        tgt = np.clip(P["tp_base"] * S.TP_FRACTION, S.TP_MIN, S.TP_MAX)
+        ratio = tgt / P["reach"]
         m = ((P["spike_cnt"] >= min_spikes) &
              (c <= P["year_ago"] * S.NOT_UP_MAX) &
              (P["qv30"] >= S.MIN_DAILY_QUOTE_VOL) &
              (P["drought"] >= drought) &
-             (P["pos"] <= pos_max))
+             (P["pos"] <= pos_max) &
+             (ratio >= S.MIN_TGT_RATIO) & (ratio <= S.MAX_TGT_RATIO))
     return np.nan_to_num(m, nan=0).astype(bool)
 
 
@@ -206,6 +209,13 @@ if __name__ == "__main__":
     ap.add_argument("--style", default="add_stop", choices=list(EXIT_STYLES))
     ap.add_argument("--tp-frac", type=float, default=None, help="과거 슈팅 크기의 몇 배를 목표로")
     ap.add_argument("--stop", type=float, default=None, help="손절 (예: -0.20)")
+    ap.add_argument("--ratio-min", type=float, default=None)
+    ap.add_argument("--ratio-max", type=float, default=None)
+    ap.add_argument("--droughts", default="90,120")
+    ap.add_argument("--poses", default="0.35,0.50")
+    ap.add_argument("--ticker-pct", type=float, default=None)
+    ap.add_argument("--max-concurrent", type=int, default=None)
+    ap.add_argument("--min-vol", type=float, default=None)
     args = ap.parse_args()
 
     globals()["STYLE"] = EXIT_STYLES[args.style]
@@ -213,6 +223,16 @@ if __name__ == "__main__":
         S.TP_FRACTION = args.tp_frac
     if args.stop is not None:
         S.STOP_PCT = args.stop
+    if args.ratio_min is not None:
+        S.MIN_TGT_RATIO = args.ratio_min
+    if args.ratio_max is not None:
+        S.MAX_TGT_RATIO = args.ratio_max
+    if args.ticker_pct is not None:
+        S.TICKER_MARGIN_PCT = args.ticker_pct
+    if args.max_concurrent is not None:
+        S.MAX_CONCURRENT = args.max_concurrent
+    if args.min_vol is not None:
+        S.MIN_DAILY_QUOTE_VOL = args.min_vol
     symbols, daily = load_all(market="spot")
     pre = base_arrays(symbols, daily)
     dates = np.array(sorted(set(np.concatenate([daily[s]["dt"].values for s in symbols]))))
@@ -220,11 +240,13 @@ if __name__ == "__main__":
     last_day = {s: daily[s]["dt"].values[-1] for s in symbols}
     drought_arr = {s: pre[s]["drought"] for s in symbols}
     regs = regime_maps(symbols, daily, dates)
-    print(f"[레짐 {args.regime} / 구조 {args.style} / 목표배수 {S.TP_FRACTION} / 손절 {S.STOP_PCT:.0%}] 심볼 {len(symbols)}종 | 전체 {pd.Timestamp(dates[0]).date()} ~ {pd.Timestamp(dates[-1]).date()}")
+    print(f"[레짐 {args.regime} / 구조 {args.style} / 목표배수 {S.TP_FRACTION} / 손절 {S.STOP_PCT:.0%} / 자리 {S.MIN_TGT_RATIO}~{S.MAX_TGT_RATIO}] 심볼 {len(symbols)}종 | 전체 {pd.Timestamp(dates[0]).date()} ~ {pd.Timestamp(dates[-1]).date()}")
 
     REGS = (["none", "btc_ma100", "btc_ma200", "breadth25", "breadth40"]
             if args.regime == "auto" else [args.regime])
-    GRID = list(itertools.product([90, 120], [0.35, 0.50], [2], REGS))
+    DROUGHTS = [int(x) for x in args.droughts.split(",")]
+    POSES = [float(x) for x in args.poses.split(",")]
+    GRID = list(itertools.product(DROUGHTS, POSES, [2], REGS))
     mask_cache = {}
     def get_masks(dr, pos, sp):
         key = (dr, pos, sp)
@@ -280,6 +302,23 @@ if __name__ == "__main__":
         print(f"  승률          : {len(wins)/len(tr)*100:.1f}%")
         print(f"  Profit Factor : {gp/gl if gl>0 else float('inf'):.2f}")
         print(f"  수익 구간     : {sum(1 for x in log if x['ret']>0)}/{len(log)}")
+        if len(tr):
+            print(f"  평균 보유     : {tr['hold_days'].mean():.0f}일  "
+                  f"→ 평균 동시보유 {len(tr)*tr['hold_days'].mean()/len(eq):.2f}종목 "
+                  f"(칸 {S.MAX_CONCURRENT}개 중)")
+        # 차트 모양 탐색은 2024년 이전 데이터로만 했다. 그 이후는 오염되지 않은 구간이다.
+        CLEAN = np.datetime64("2024-01-01")
+        pre_log = [x for x in log if np.datetime64(str(x["test_from"])) < CLEAN]
+        post_log = [x for x in log if np.datetime64(str(x["test_from"])) >= CLEAN]
+        for nm, lg in (("2024년 이전(탐색에 사용)", pre_log), ("2024년 이후(미사용·청정)", post_log)):
+            if not lg:
+                continue
+            mult = 1.0
+            for x in lg:
+                mult *= (1 + x["ret"]/100)
+            print(f"  {nm:<22}: {len(lg):2d}구간  누적 {(mult-1)*100:+7.1f}%  "
+                  f"수익구간 {sum(1 for x in lg if x['ret']>0)}/{len(lg)}  "
+                  f"거래 {sum(x['trades'] for x in lg)}건")
         print("\n  청산 사유별:")
         for r, g in tr.groupby("reason"):
             print(f"    {r:10s} {len(g):4d}건  합계 {g.pnl.sum():+9.1f}  "

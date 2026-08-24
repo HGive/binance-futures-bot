@@ -35,7 +35,8 @@ SPIKE_CLUSTER_DAYS = 5       # 같은 슈팅으로 볼 최소 간격
 YEAR_WINDOW = 365            # 모든 판단은 1년 창 기준
 MIN_SPIKES = 2               # 1년 안에 슈팅 2회 이상
 NOT_UP_MAX = 1.10            # 1년 전 대비 +10% 초과 상승한 종목은 제외 (하락/횡보만)
-MIN_DAILY_QUOTE_VOL = 5e6
+MIN_DAILY_QUOTE_VOL = 1e6    # 일 거래대금 하한. 500만→100만 으로 낮추자
+                             # 거래 51→127건, 워크포워드 수익 +46%→+194%
 
 # =====================================================================
 #  진입 타이밍 — 조용하고 쌀 때
@@ -53,12 +54,16 @@ MAX_PRICE_POS = 0.35         # 1년 고저 범위의 하위 35% 안에 있을 �
 #    사놓고 기다리는 전략에 선물을 쓸 이유가 없다.
 # =====================================================================
 LEVERAGE = 1                 # 현물
-TICKER_MARGIN_PCT = 0.07     # 티커당 시드의 7% (12종목 × 7% = 최대 84%)
-FIRST_ENTRY_FRAC = 0.5       # 1차는 절반만 (아주 보수적으로)
-ADD_TRIGGER_ROI = -0.233     # 진입가 대비 -23.3% 에서 딱 한 번 추매
-STOP_ROI_AFTER_ADD = -0.233  # 추매 후 평단 대비 -23.3% → 정리
-TAKE_PROFIT_ROI = 0.33       # 평단 대비 +33% 에서 전량 매도
-MAX_CONCURRENT = 12          # 동시 12종목 (in-sample 최적, 7종목보다 낫고 20종목보다 낫다)
+TICKER_MARGIN_PCT = 0.10     # 티커당 시드의 10% (STRATEGY_RULES.md 2절 상한)
+MAX_CONCURRENT = 8           # 동시 8종목. 10~12칸으로 늘리면 하락장 노출이 커져 오히려 나빠진다
+FIRST_ENTRY_FRAC = 1.0       # 물타기 없음 — 처음부터 전액
+                             # 추매는 버렸다: 추매 직후에 손절선이 있으면 지는 쪽에만 돈을
+                             # 두 배 넣게 되어 손실 증폭기가 된다 (docs/walkforward_results.md)
+ADD_TRIGGER_ROI = -0.233     # (미사용, 참고용)
+STOP_ROI_AFTER_ADD = -0.233  # (미사용, 참고용)
+TAKE_PROFIT_ROI = 0.33       # (미사용) 목표는 target_gain() 으로 종목마다 따로 잡는다
+REGIME_MA_DAYS = 100         # BTC 100일선 아래에서는 신규 진입 안 함
+                             # 필터를 성적 보고 켜고 끄면 항상 늦는다. 상시 켜둔다.
 
 # =====================================================================
 #  비용
@@ -89,7 +94,28 @@ def to_daily(df4h: pd.DataFrame) -> pd.DataFrame:
 # =====================================================================
 TP_FRACTION = 0.5            # 과거 슈팅 크기의 몇 배를 목표로 할 것인가
 TP_MIN, TP_MAX = 0.08, 0.80  # 목표 상하한 (터무니없는 값 방지)
-STOP_PCT = -0.20             # 손절 (진입가 대비)
+STOP_PCT = -0.20             # 손절 (진입가 대비). 고정이 맞다 — 아래 참고
+
+# ---------------------------------------------------------------------
+#  "들어갈 자리" — 목표가 그 종목의 평소 진폭 대비 어느 위치인가
+#
+#  reach = 최근 1년간 90일 고저 진폭의 중앙값 = "이 종목은 보통 이만큼 움직인다"
+#  ratio = 목표 / reach
+#
+#  탐색 결과(2018~2023, 17,898건):
+#     ratio 0.15 이하  승률 35%  기대값 -5.2%   ← 목표가 흔들림보다 작아 손절에 먼저 털림
+#     ratio 0.25~0.30  승률 50%  기대값 +1.5%
+#     ratio 0.30~0.40  승률 56%  기대값 +3.5%
+#     ratio 0.60 이상  승률  3%  기대값 -18.2%  ← 목표가 도달 불가능한 거리
+#
+#  즉 자리에는 위아래 경계가 둘 다 있다. 같은 진입 규칙이라도 이 밴드 밖이면 들어가지 않는다.
+#
+#  손절을 진폭 비례로 바꿔보기도 했으나 전 조합 마이너스였다.
+#  조용한 종목일수록 손절이 좁아져 평소 흔들림에 털리기 때문이다. 손절은 고정이 맞다.
+# ---------------------------------------------------------------------
+REACH_WINDOW = 90            # 진폭을 재는 구간
+MIN_TGT_RATIO = 0.25         # 이보다 낮으면 목표가 그 종목 흔들림에 비해 작아 손절에 먼저 털린다
+MAX_TGT_RATIO = 0.60         # 이보다 높으면 목표가 못 간다
 
 
 def spike_gains(d: pd.DataFrame):
@@ -180,6 +206,13 @@ def precompute(d: pd.DataFrame) -> dict:
             if m.any():
                 tp_base[i] = float(np.median(sg_val[m]))
 
+    # 이 종목이 보통 얼마나 움직이는가 (90일 고저 진폭의 1년 중앙값)
+    rmax = pd.Series(hi).rolling(REACH_WINDOW).max().values
+    rmin = pd.Series(lo).rolling(REACH_WINDOW).min().values
+    with np.errstate(invalid="ignore", divide="ignore"):
+        swing = rmax / rmin - 1
+    reach = pd.Series(swing).rolling(YEAR_WINDOW).median().values
+
     roll_lo = pd.Series(lo).rolling(YEAR_WINDOW).min().values
     roll_hi = pd.Series(hi).rolling(YEAR_WINDOW).max().values
     with np.errstate(invalid="ignore", divide="ignore"):
@@ -187,7 +220,16 @@ def precompute(d: pd.DataFrame) -> dict:
     year_ago = np.full(n, np.nan)
     year_ago[YEAR_WINDOW:] = c[:-YEAR_WINDOW]
     return {"spike_cnt": cnt, "drought": drought, "pos": pos, "tp_base": tp_base,
-            "year_ago": year_ago, "qv30": d["qv"].rolling(30).median().values}
+            "reach": reach, "year_ago": year_ago,
+            "qv30": d["qv"].rolling(30).median().values}
+
+
+def tgt_ratio(pre: dict, i: int) -> float:
+    """목표 ÷ 그 종목의 평소 진폭. 이 값이 '들어갈 자리'인지를 결정한다."""
+    r = pre["reach"][i]
+    if np.isnan(r) or r <= 0:
+        return np.nan
+    return target_gain(pre, i) / r
 
 
 def target_gain(pre: dict, i: int) -> float:
@@ -210,11 +252,14 @@ def scan_ok(pre: dict, close_i: float, i: int) -> bool:
 
 
 def entry_signal(pre: dict, i: int) -> bool:
-    """지금 들어갈 때인가 — 조용해졌고, 가격도 낮은가."""
+    """지금 들어갈 자리인가 — 조용해졌고, 가격도 낮고, 목표가 갈 만한 거리인가."""
     if pre["drought"][i] < MIN_DROUGHT_DAYS:
         return False
     p = pre["pos"][i]
-    return bool(not np.isnan(p) and p <= MAX_PRICE_POS)
+    if np.isnan(p) or p > MAX_PRICE_POS:
+        return False
+    r = tgt_ratio(pre, i)
+    return bool(not np.isnan(r) and MIN_TGT_RATIO <= r <= MAX_TGT_RATIO)
 
 
 # --------------------------------------------------------------- 가격 산식
