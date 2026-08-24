@@ -15,16 +15,27 @@ from backtest import data as dataio  # noqa: E402
 WARMUP = S.YEAR_WINDOW + 15
 
 
-def load_all(min_days=430):
+def load_all(min_days=430, market="futures"):
+    """market='spot' 이면 스팟 일봉(spot_*_1d.csv), 아니면 선물 4시간봉을 일봉으로."""
     syms, out = [], {}
-    for path in sorted(glob.glob(os.path.join(dataio.CACHE_DIR, "*_4h.csv"))):
+    pattern = "spot_*_1d.csv" if market == "spot" else "*_4h.csv"
+    for path in sorted(glob.glob(os.path.join(dataio.CACHE_DIR, pattern))):
         df = pd.read_csv(path)
-        if len(df) < min_days * 6:
-            continue
-        d = S.to_daily(df)
+        base = os.path.basename(path)
+        if market == "spot":
+            if len(df) < min_days:
+                continue
+            df["dt"] = pd.to_datetime(df["timestamp"], unit="ms", utc=True)
+            d = df.copy()
+            d["qv"] = d["volume"] * d["close"]
+            sym = base.replace("spot_", "").replace("_1d.csv", "").replace("_", "/")
+        else:
+            if len(df) < min_days * 6:
+                continue
+            d = S.to_daily(df)
+            sym = base.replace("_4h.csv", "").replace("_", "/").replace("-", ":")
         if len(d) < min_days:
             continue
-        sym = os.path.basename(path).replace("_4h.csv", "").replace("_", "/").replace("-", ":")
         out[sym] = d
         syms.append(sym)
     return syms, out
@@ -41,6 +52,7 @@ class Pos:
 def run(symbols, daily, pre, dates, a, b, seed=1000.0, random_entry=False, rng=None):
     cash, positions, trades, curve = seed, {}, [], []
     idx = {s: {t: i for i, t in enumerate(daily[s]["dt"].values)} for s in symbols}
+    last_day = {s: daily[s]["dt"].values[-1] for s in symbols}
 
     for di in range(a, b):
         today = dates[di]
@@ -48,7 +60,21 @@ def run(symbols, daily, pre, dates, a, b, seed=1000.0, random_entry=False, rng=N
         for sym in list(positions):
             p = positions[sym]
             i = idx[sym].get(today)
-            if i is None or i <= p.open_i:      # 체결봉은 청산 판정에서 제외 (규칙 3.3)
+            if i is None:
+                # 데이터가 끊겼는데 그 심볼의 마지막 날을 지났다면 = 상장폐지.
+                # 마지막 종가로 강제 청산한다 (안 하면 사라진 종목을 영원히 보유하게 됨).
+                if today > last_day[sym]:
+                    px = float(daily[sym]["close"].iloc[-1])
+                    fill = px * (1 - S.SLIPPAGE)
+                    pnl = max(p.qty * (fill - p.avg) - p.qty * fill * S.FEE_RATE, -p.margin)
+                    cash += p.margin + pnl
+                    trades.append({"symbol": sym, "entry_ts": p.open_ts, "exit_ts": today,
+                                   "hold_days": int((today - p.open_ts)/np.timedelta64(1, "D")),
+                                   "avg": p.avg, "exit": px, "reason": "DELISTED", "added": p.added,
+                                   "margin": p.margin, "pnl": pnl, "roi": pnl/p.margin})
+                    del positions[sym]
+                continue
+            if i <= p.open_i:                   # 체결봉은 청산 판정에서 제외 (규칙 3.3)
                 continue
             row = daily[sym].iloc[i]
             hi, lo, op, cl = row["high"], row["low"], row["open"], row["close"]
@@ -100,6 +126,8 @@ def run(symbols, daily, pre, dates, a, b, seed=1000.0, random_entry=False, rng=N
                 i = idx[sym].get(today)
                 if i is None or i < WARMUP or i + 1 >= len(daily[sym]):
                     continue
+                if int((last_day[sym] - today)/np.timedelta64(1, "D")) < 5:
+                    continue                     # 곧 데이터가 끝나는 종목은 진입 제외
                 P = pre[sym]
                 cl = daily[sym].iloc[i]["close"]
                 if not S.scan_ok(P, cl, i):
@@ -126,7 +154,17 @@ def run(symbols, daily, pre, dates, a, b, seed=1000.0, random_entry=False, rng=N
             eq += pp.margin if i is None else max(pp.margin + pp.qty*(daily[s].iloc[i]["close"] - pp.avg), 0)
         curve.append((today, eq))
 
-    return pd.DataFrame(trades), pd.DataFrame(curve, columns=["dt", "equity"])
+    # 구간 종료 시점의 미청산 포지션 — 승률 통계에서 빠지므로 따로 보고한다
+    open_info = []
+    for s_, pp in positions.items():
+        i = idx[s_].get(dates[b-1])
+        cl = float(daily[s_]["close"].iloc[i if i is not None else -1])
+        upnl = pp.qty * (cl - pp.avg)
+        open_info.append({"symbol": s_, "margin": pp.margin, "upnl": upnl,
+                          "roi": upnl/pp.margin,
+                          "days": int((dates[b-1] - pp.open_ts)/np.timedelta64(1, "D"))})
+    return (pd.DataFrame(trades), pd.DataFrame(curve, columns=["dt", "equity"]),
+            pd.DataFrame(open_info))
 
 
 def summarize(tr, eq, seed):
@@ -166,9 +204,11 @@ if __name__ == "__main__":
     ap.add_argument("--seed-usdt", type=float, default=1000.0)
     ap.add_argument("--baseline", action="store_true")
     ap.add_argument("--dump", default="")
+    ap.add_argument("--market", choices=["futures", "spot"], default="futures")
     args = ap.parse_args()
 
-    symbols, daily = load_all()
+    # 전략 상수는 strategies/spike_drought.py 가 유일한 출처다 (규칙 3.1). 여기서 덮어쓰지 않는다.
+    symbols, daily = load_all(market=args.market)
     pre = {s: S.precompute(daily[s]) for s in symbols}
     dates = np.array(sorted(set(np.concatenate([daily[s]["dt"].values for s in symbols]))))
     # 워밍업(1년)을 뺀 실제 신호 구간을 기준으로 분할한다
@@ -180,7 +220,7 @@ if __name__ == "__main__":
     print(f"심볼 {len(symbols)}종 | {args.part}: "
           f"{pd.Timestamp(dates[a]).date()} ~ {pd.Timestamp(dates[b-1]).date()} ({b-a}일)")
 
-    tr, eq = run(symbols, daily, pre, dates, a, b, args.seed_usdt)
+    tr, eq, op = run(symbols, daily, pre, dates, a, b, args.seed_usdt)
     report(summarize(tr, eq, args.seed_usdt), f"spike_drought [{args.part}]")
     if len(tr):
         print("\n  청산 사유별:")
@@ -188,7 +228,10 @@ if __name__ == "__main__":
             print(f"    {r:12s} {len(g):4d}건  합계 {g['pnl'].sum():+9.1f}  평균ROI {g['roi'].mean()*100:+6.1f}%")
         if args.dump:
             tr.to_csv(args.dump, index=False); print(f"  → {args.dump}")
+    if len(op):
+        print(f"\n  구간 종료 시 미청산 {len(op)}건, 평가손익 {op['upnl'].sum():+.1f} "
+              f"(평균 ROI {op['roi'].mean()*100:+.1f}%, 손실 포지션 {int((op['roi']<0).sum())}건)")
     if args.baseline:
-        tb, eb = run(symbols, daily, pre, dates, a, b, args.seed_usdt,
+        tb, eb, _ = run(symbols, daily, pre, dates, a, b, args.seed_usdt,
                      random_entry=True, rng=np.random.default_rng(7))
         report(summarize(tb, eb, args.seed_usdt), f"random entry 베이스라인 [{args.part}]")

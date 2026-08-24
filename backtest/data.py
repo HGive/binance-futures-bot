@@ -14,12 +14,14 @@ TF_MS = {"1m": 60_000, "5m": 300_000, "15m": 900_000, "1h": 3600_000,
          "4h": 14400_000, "1d": 86400_000}
 
 _exchange = None
+MARKET = "futures"          # "futures" (USDⓈ-M 무기한) | "spot"
 
 
 def get_exchange():
     global _exchange
     if _exchange is None:
-        _exchange = ccxt.binanceusdm({
+        cls = ccxt.binance if MARKET == "spot" else ccxt.binanceusdm
+        _exchange = cls({
             "enableRateLimit": True,
             "options": {"fetchCurrencies": False},
         })
@@ -32,7 +34,8 @@ def get_exchange():
 
 def _cache_path(symbol: str, timeframe: str) -> str:
     safe = symbol.replace("/", "_").replace(":", "-")
-    return os.path.join(CACHE_DIR, f"{safe}_{timeframe}.csv")
+    tag = "spot_" if MARKET == "spot" else ""
+    return os.path.join(CACHE_DIR, f"{tag}{safe}_{timeframe}.csv")
 
 
 def fetch_ohlcv_paged(symbol: str, timeframe: str, since_ms: int, until_ms: int | None = None, ex=None) -> pd.DataFrame:
@@ -91,7 +94,12 @@ def liquid_universe(top_n: int = 150, min_quote_vol: float = 5_000_000) -> list[
     rows = []
     for sym, t in tickers.items():
         m = ex.markets.get(sym)
-        if not m or not m.get("swap") or m.get("quote") != "USDT" or not m.get("active") or not m.get("linear"):
+        if not m or m.get("quote") != "USDT" or not m.get("active"):
+            continue
+        if MARKET == "spot":
+            if not m.get("spot"):
+                continue
+        elif not m.get("swap") or not m.get("linear"):
             continue
         qv = t.get("quoteVolume") or 0
         if qv < min_quote_vol:
@@ -103,7 +111,8 @@ def liquid_universe(top_n: int = 150, min_quote_vol: float = 5_000_000) -> list[
 
 def _worker_exchange():
     """스레드마다 별도 인스턴스 — ccxt 인스턴스는 스레드 안전하지 않다."""
-    ex = ccxt.binanceusdm({"enableRateLimit": True, "options": {"fetchCurrencies": False}})
+    cls = ccxt.binance if MARKET == "spot" else ccxt.binanceusdm
+    ex = cls({"enableRateLimit": True, "options": {"fetchCurrencies": False}})
     # klines(limit=1000) 는 요청당 weight 10, IP 한도는 분당 2400.
     # 워커 수 x (1000/rateLimit) x 10 이 2400 을 넘지 않게 잡는다.
     ex.rateLimit = 600
@@ -121,10 +130,14 @@ if __name__ == "__main__":
     ap.add_argument("--years", type=float, default=2.5)
     ap.add_argument("--top", type=int, default=150)
     ap.add_argument("--workers", type=int, default=1)
+    ap.add_argument("--market", choices=["futures", "spot"], default="futures")
+    ap.add_argument("--min-vol", type=float, default=5_000_000)
     args = ap.parse_args()
+    MARKET = args.market
 
-    syms = liquid_universe(args.top)
-    print(f"universe: {len(syms)} symbols, workers={args.workers}", flush=True)
+    globals()["MARKET"] = args.market
+    syms = liquid_universe(args.top, args.min_vol)
+    print(f"universe: {len(syms)} {args.market} symbols, workers={args.workers}", flush=True)
     local = threading.local()
     done = [0]
     lock = threading.Lock()
