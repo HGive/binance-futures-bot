@@ -505,6 +505,10 @@ def main():
     ap.add_argument("--top", type=int, default=400)
     ap.add_argument("--fast", type=int, default=300, help="손절 감시 주기(초)")
     ap.add_argument("--i-know", action="store_true", help="live 모드 확인")
+    ap.add_argument("--force-entry", default=None,
+                    help="테스트넷 주문 경로 점검용. 신호와 무관하게 이 심볼을 산다 (예: BTC/USDT)")
+    ap.add_argument("--force-usdt", type=float, default=None, help="--force-entry 금액")
+    ap.add_argument("--close-all", action="store_true", help="보유 전량 시장가 정리")
     args = ap.parse_args()
 
     if args.mode == "live" and not args.i_know:
@@ -516,6 +520,28 @@ def main():
     if args.mode == "paper" and "paper_cash" not in bot.state.d:
         bot.state.d["paper_cash"] = args.seed
         bot.state.save()
+
+    if args.close_all:
+        for sym in list(bot.state.pos):
+            bot.close(sym, "MANUAL", 1.0)
+        logging.info("전량 정리 완료")
+        return
+
+    if args.force_entry:
+        if args.mode == "live":
+            print("--force-entry 는 실전에서 못 쓴다."); sys.exit(1)
+        sym = args.force_entry
+        bot.refresh([sym, "BTC/USDT"])
+        bot.compute()
+        if sym not in bot.daily:
+            logging.error(f"{sym} 일봉을 못 받았다"); sys.exit(1)
+        i = len(bot.daily[sym]) - 1
+        amt = args.force_usdt or max(bot.equity() * S.TICKER_MARGIN_PCT, 15.0)
+        logging.warning(f"[강제 진입] 신호를 무시하고 {sym} 를 {amt:.2f} USDT 산다 — 주문 경로 점검용")
+        ok = bot.enter(sym, i, amt)
+        logging.info("주문 경로 점검 " + ("성공" if ok else "실패"))
+        logging.info(f"상태 파일: {bot.state.path}")
+        return
 
     if args.once:
         bot.daily_tick()
