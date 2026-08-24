@@ -33,6 +33,7 @@ from backtest import data as D
 STATE_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "logs")
 DAY_MS = 86_400_000
 WARMUP = 430          # precompute 가 안정되는 최소 봉 수
+STOP_LIMIT_GAP = 0.02 # 손절 스탑 발동 후 지정가를 이만큼 아래로 (체결 보장)
 
 
 def drop_incomplete(df, step_ms: int):
@@ -252,6 +253,53 @@ class HibernateBot:
             return None
         return self._settle(sym, self.ex.create_order(sym, "market", "sell", amt))
 
+    def sell_oco(self, sym, amount, tp_price, stop_price):
+        """익절 지정가 + 손절 스탑을 한 쌍으로 건다 (OCO).
+
+        STRATEGY_RULES 3.5 — 손절은 거래소에 걸어둔다. 봇이 죽으면 코드 손절도 죽는다.
+        현물은 같은 수량을 두 주문에 못 묶지만 OCO 는 예외로 묶어준다.
+        실패하면 지정가만 걸고 코드 손절로 내려간다 (그 사실을 로그에 남긴다).
+        """
+        if self.dry:
+            return {"id": f"paper-oco-{sym}-{tp_price:.8f}"}, True
+        base = sym.split("/")[0]
+        free = float(self.ex.fetch_balance().get(base, {}).get("free") or 0)
+        amt = float(self.ex.amount_to_precision(sym, min(amount, free)))
+        tp = float(self.ex.price_to_precision(sym, tp_price))
+        st = float(self.ex.price_to_precision(sym, stop_price))
+        # 스탑 발동 후 실제로 체결되도록 지정가를 조금 아래로
+        stl = float(self.ex.price_to_precision(sym, stop_price * (1 - STOP_LIMIT_GAP)))
+        ok, why = self._fits(sym, amt, st)
+        if not ok:
+            logging.warning(f"[{sym}] OCO 불가 — {why}")
+            return None, False
+        try:
+            o = self.ex.private_post_order_oco({
+                "symbol": self.ex.market(sym)["id"],
+                "side": "SELL",
+                "quantity": self.ex.amount_to_precision(sym, amt),
+                "price": self.ex.price_to_precision(sym, tp),       # 익절 지정가
+                "stopPrice": self.ex.price_to_precision(sym, st),   # 손절 발동가
+                "stopLimitPrice": self.ex.price_to_precision(sym, stl),
+                "stopLimitTimeInForce": "GTC",
+            })
+            oid = o.get("orderListId") or o.get("listClientOrderId")
+            logging.info(f"[{sym}] OCO 등록 — 익절 {tp:.8g} / 손절 {st:.8g} (지정가 {stl:.8g}) 수량 {amt:.6g}")
+            return {"id": str(oid), "oco": True, "raw": o}, True
+        except Exception as e:
+            logging.warning(f"[{sym}] OCO 실패({type(e).__name__}: {e}) — 지정가만 걸고 코드 손절로 간다")
+            o = self.sell_limit(sym, amt, tp)
+            return o, False
+
+    def cancel_oco(self, sym, oid):
+        if self.dry or not oid:
+            return
+        try:
+            self.ex.private_delete_orderlist({"symbol": self.ex.market(sym)["id"],
+                                              "orderListId": int(oid)})
+        except Exception as e:
+            logging.info(f"[{sym}] OCO {oid} 취소 실패(이미 체결/취소?): {e}")
+
     def sell_limit(self, sym, amount, price):
         if self.dry:
             return {"id": f"paper-{sym}-{price:.8f}"}
@@ -324,6 +372,7 @@ class HibernateBot:
              "stop": entry * (1 + S.STOP_PCT), "runner": False,
              "opened": datetime.now(timezone.utc).isoformat(),
              "drought": int(pre["drought"][i]), "tp1_id": None, "tp2_id": None,
+             "tp1_oco": False, "tp2_oco": False, "exchange_stop": False,
              "budget": budget}
         self.state.pos[sym] = p
         self.place_exits(sym)
@@ -334,28 +383,37 @@ class HibernateBot:
         return True
 
     def place_exits(self, sym):
-        """익절 지정가를 걸어둔다. 1차 70% + 2차 30%."""
+        """익절+손절을 거래소에 건다. OCO 두 쌍 (1차 70% / 2배 30%), 손절가는 동일."""
         p = self.state.pos[sym]
         if p["runner"]:
-            o = self.sell_limit(sym, p["qty"], p["tp2"])
+            o, oco = self.sell_oco(sym, p["qty"], p["tp2"], p["stop"])
             p["tp2_id"] = o["id"] if o else None
+            p["tp2_oco"] = bool(oco)
+            p["exchange_stop"] = bool(oco)
             return
         q1 = p["qty"] * S.SPLIT_AT_FIRST
         q2 = p["qty"] - q1
-        o1 = self.sell_limit(sym, q1, p["tp1"])
+        o1, oco1 = self.sell_oco(sym, q1, p["tp1"], p["stop"])
         p["tp1_id"] = o1["id"] if o1 else None
-        o2 = self.sell_limit(sym, q2, p["tp2"])
+        p["tp1_oco"] = bool(oco1)
+        o2, oco2 = self.sell_oco(sym, q2, p["tp2"], p["stop"])
         p["tp2_id"] = o2["id"] if o2 else None
-        if not o1:
-            logging.warning(f"[{sym}] 1차 익절 주문 실패 — 봇이 가격으로 감시한다")
+        p["tp2_oco"] = bool(oco2)
+        p["exchange_stop"] = bool(oco1 and oco2)
+        if not p["exchange_stop"]:
+            logging.warning(f"[{sym}] 거래소 손절이 다 안 걸렸다 — 봇이 죽으면 손절도 죽는다. "
+                            f"프로세스 감시를 확인해라")
 
     # ── 청산 ──────────────────────────────────────────────────
     def close(self, sym, reason, frac=1.0):
         p = self.state.pos.get(sym)
         if not p:
             return
-        self.cancel(sym, p.get("tp1_id"))
-        self.cancel(sym, p.get("tp2_id"))
+        for key, ocokey in (("tp1_id", "tp1_oco"), ("tp2_id", "tp2_oco")):
+            if p.get(ocokey):
+                self.cancel_oco(sym, p.get(key))
+            else:
+                self.cancel(sym, p.get(key))
         p["tp1_id"] = p["tp2_id"] = None
         q = p["qty"] * frac
         o = self.sell_market(sym, q)

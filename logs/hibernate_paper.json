@@ -1,22 +1,25 @@
 {
   "positions": {
     "CAKE/USDT": {
-      "qty": 56.78,
-      "entry": 1.7618804999999997,
+      "qty": 56.52,
+      "entry": 1.7698844999999999,
       "target_gain": 0.23392357875116487,
-      "tp1": 2.1740258918918913,
-      "tp2": 3.5237609999999995,
-      "stop": 1.4095043999999999,
+      "tp1": 2.183902216216216,
+      "tp2": 3.5397689999999997,
+      "stop": 1.4159076,
       "runner": false,
-      "opened": "2026-08-24T12:32:04.863096+00:00",
+      "opened": "2026-08-24T12:53:05.275216+00:00",
       "drought": 312,
-      "tp1_id": "paper-CAKE/USDT-2.17402589",
-      "tp2_id": "paper-CAKE/USDT-3.52376100",
+      "tp1_id": "paper-oco-CAKE/USDT-2.18390222",
+      "tp2_id": "paper-oco-CAKE/USDT-3.53976900",
+      "tp1_oco": true,
+      "tp2_oco": true,
+      "exchange_stop": true,
       "budget": 100.0
     }
   },
   "history": [],
   "halted": false,
-  "updated": "2026-08-24T12:32:04.863939+00:00",
-  "paper_cash": 899.96042521
+  "updated": "2026-08-24T12:53:05.276323+00:00",
+  "paper_cash": 899.96612806
 }
