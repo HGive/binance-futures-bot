@@ -15,7 +15,7 @@ import numpy as np
 import pandas as pd
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from backtest.spike_drought import load_all  # noqa: E402
+from backtest.hibernate import load_all  # noqa: E402
 
 # 지정가로 사고 지정가로 판다 → 양쪽 메이커
 FEE_MAKER = 0.0002        # 선물 메이커 0.02%

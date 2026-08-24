@@ -2,7 +2,7 @@
 워크포워드 검증.
 
 단일 70/30 분할의 문제: 앞 구간이 어떤 장이었느냐에 결과가 통째로 좌우된다.
-실제로 spike_drought 는 개발구간(BTC +374%)에서 +80%, 검증구간(BTC -37%)에서 -42% 였다.
+실제로 hibernate 는 개발구간(BTC +374%)에서 +80%, 검증구간(BTC -37%)에서 -42% 였다.
 
 여기서는 이렇게 한다:
     [학습 365일] → [검증 90일] → 90일 밀기 → [학습 365일] → [검증 90일] → ...
@@ -18,8 +18,8 @@ import numpy as np
 import pandas as pd
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-import strategies.spike_drought as S  # noqa: E402
-from backtest.spike_drought import load_all, WARMUP  # noqa: E402
+import strategies.hibernate as S  # noqa: E402
+from backtest.hibernate import load_all, WARMUP  # noqa: E402
 
 # 진입/청산 구조 변형. 파라미터가 아니라 '설계'라서 따로 비교한다.
 #   add_stop : 절반 진입 → -23.3%에서 추매 → 평단 -23.3%에서 손절   (기존)
@@ -68,7 +68,7 @@ def uptrend_dip_mask(pre, daily, sym, pos_max=0.12, min_ret=0.15, min_vol=0.05):
     """
     두 번째 자리 — '상승 추세인데 깊게 눌린 것'.
 
-    첫 번째 전략(spike_drought)은 1년 전 대비 오르지 않은 종목만 본다.
+    첫 번째 전략(hibernate)은 1년 전 대비 오르지 않은 종목만 본다.
     여기는 정확히 그 반대편 — 1년으로 보면 올랐는데 지금은 1년 범위 바닥에 있는 자리다.
     두 전략은 조건상 겹치지 않는다.
 
@@ -255,10 +255,10 @@ if __name__ == "__main__":
     ap.add_argument("--train", type=int, default=365)
     ap.add_argument("--test", type=int, default=90)
     ap.add_argument("--seed-usdt", type=float, default=1000.0)
-    ap.add_argument("--regime", default="auto",
+    ap.add_argument("--regime", default="btc_ma100",
                     help="auto=학습구간 성적으로 선택, 그 외에는 해당 레짐으로 고정")
     ap.add_argument("--quiet", action="store_true")
-    ap.add_argument("--style", default="add_stop", choices=list(EXIT_STYLES))
+    ap.add_argument("--style", default="adaptive", choices=list(EXIT_STYLES))
     ap.add_argument("--tp-frac", type=float, default=None, help="과거 슈팅 크기의 몇 배를 목표로")
     ap.add_argument("--stop", type=float, default=None, help="손절 (예: -0.20)")
     ap.add_argument("--ratio-min", type=float, default=None)
