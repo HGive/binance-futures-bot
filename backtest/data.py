@@ -132,6 +132,7 @@ if __name__ == "__main__":
     ap.add_argument("--workers", type=int, default=1)
     ap.add_argument("--market", choices=["futures", "spot"], default="futures")
     ap.add_argument("--min-vol", type=float, default=5_000_000)
+    ap.add_argument("--refresh", action="store_true")
     args = ap.parse_args()
     MARKET = args.market
 
@@ -147,7 +148,7 @@ if __name__ == "__main__":
         try:
             if not hasattr(local, "ex"):
                 local.ex = _worker_exchange()
-            df = load(sym, args.timeframe, args.years, ex=local.ex)
+            df = load(sym, args.timeframe, args.years, refresh=args.refresh, ex=local.ex)
             span = f"{df['dt'].iloc[0].date()} ~ {df['dt'].iloc[-1].date()}" if len(df) else "EMPTY"
             msg = f"{sym:28s} {len(df):6d} bars  {span}"
         except Exception as e:
