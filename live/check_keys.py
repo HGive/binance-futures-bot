@@ -17,20 +17,22 @@ import ccxt
 
 TARGETS = [
     ("현물 데모", "spot", True, "BINANCE_SPOT_TESTNET_KEY", "BINANCE_SPOT_TESTNET_SECRET",
-     "https://testnet.binance.vision", True),
+     "https://testnet.binance.vision", "HIBERNATE / SURFER"),
     ("선물 데모", "futures", True, "BINANCE_TESTNET_KEY", "BINANCE_TESTNET_SECRET",
-     "https://testnet.binancefuture.com", False),
+     "https://testnet.binancefuture.com", "스캘핑"),
     ("실전 현물", "spot", False, "BINANCE_API_KEY", "BINANCE_API_SECRET",
-     "https://www.binance.com", False),
+     "https://www.binance.com", ""),
 ]
 
 
 def probe(market, testnet, key, secret):
+    import config
+    os.environ["_TMP_K"], os.environ["_TMP_S"] = key, secret
     cls = ccxt.binance if market == "spot" else ccxt.binanceusdm
     ex = cls({"apiKey": key, "secret": secret, "enableRateLimit": True,
               "options": {"adjustForTimeDifference": True, "fetchCurrencies": False}})
     if testnet:
-        ex.set_sandbox_mode(True)
+        config._use_testnet(ex, market)      # ccxt 가 선물 sandbox 를 없애서 직접 갈아끼운다
     bal = ex.fetch_balance()
     return ex, bal
 
@@ -40,7 +42,7 @@ def main():
     ok_spot_demo = False
     for label, market, testnet, kname, sname, url, needed in TARGETS:
         k, s = os.environ.get(kname, ""), os.environ.get(sname, "")
-        tag = "  ← 지금 필요한 것" if needed else ""
+        tag = f"  ← {needed}" if needed else ""
         if not k or not s:
             print(f"[{label}]{tag}\n   비어 있음 ({kname} / {sname})\n   발급: {url}\n")
             continue
@@ -52,6 +54,8 @@ def main():
                   + (", ".join(f"{a} {v:,.4f}" for a, v in top) if top else "없음"))
             if market == "spot" and testnet:
                 ok_spot_demo = True
+            if market != "spot" and testnet:
+                globals()["ok_fut_demo"] = True
                 n = sum(1 for m in ex.load_markets().values()
                         if m.get("spot") and m.get("active") and m.get("quote") == "USDT")
                 print(f"   거래 가능한 USDT 페어 {n}종")
@@ -69,6 +73,10 @@ def main():
             print(f"[{label}]{tag}\n   ✗ {type(e).__name__}: {str(e)[:150]}\n")
 
     print("─" * 60)
+    if globals().get("ok_fut_demo"):
+        print("선물 데모 준비 완료 → 스캘핑 데이터 수집에 쓴다:")
+        print("  poetry run python live/scalp_collector.py --market futures --top 20 --hours 24")
+        print()
     if ok_spot_demo:
         print("현물 데모 준비 완료. 다음:")
         print("  poetry run python live/runner.py --mode testnet --once")

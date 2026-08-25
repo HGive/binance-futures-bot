@@ -118,7 +118,8 @@ async def watch_symbol(ex, st, stop):
 
 async def collect(symbols, hours, market, testnet):
     import config
-    ex = config.make_exchange(market, testnet=testnet, use_pro=True, need_keys=False)
+    # 시세·호가는 공개 데이터라 키가 필요 없고, 실서버가 데모보다 호가가 진짜다.
+    ex = config.make_exchange(market, testnet=False, use_pro=True, need_keys=False)
     await ex.load_markets()
     states = {s: SymbolState(s) for s in symbols}
     stop = asyncio.Event()
@@ -128,18 +129,24 @@ async def collect(symbols, hours, market, testnet):
 
     tasks = [asyncio.create_task(watch_symbol(ex, s, stop)) for s in states.values()]
     end = time.time() + hours * 3600
-    rows, wrote = [], 0
+    rows, wrote, last_flush, live = [], 0, time.time(), set()
     try:
         while time.time() < end:
             await asyncio.sleep(SNAP_SEC)
             for s in states.values():
                 snap = s.snapshot()
                 if snap:
-                    rows.append(snap)
-            if len(rows) >= 500:
-                pd.DataFrame(rows).to_csv(path, mode="a", header=(wrote == 0), index=False)
-                wrote += len(rows); rows = []
-                logging.info(f"  {wrote:,}건 저장  (남은 시간 {(end-time.time())/3600:.1f}h)")
+                    rows.append(snap); live.add(s.sym)
+            # 건수뿐 아니라 시간으로도 저장한다.
+            # 호가를 안 주는 심볼이 섞이면 건수 기준만으로는 한참 안 쌓인다
+            # (토큰화 주식류가 그랬다 — 25종 중 일부만 살아서 파일이 안 생겼다)
+            if len(rows) >= 500 or time.time() - last_flush > 60:
+                if rows:
+                    pd.DataFrame(rows).to_csv(path, mode="a", header=(wrote == 0), index=False)
+                    wrote += len(rows); rows = []
+                    logging.info(f"  {wrote:,}건 저장 / 살아있는 심볼 {len(live)}/{len(states)}"
+                                 f"  (남은 시간 {(end-time.time())/3600:.1f}h)")
+                last_flush = time.time()
     except (KeyboardInterrupt, asyncio.CancelledError):
         logging.info("중단")
     finally:
@@ -200,7 +207,8 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--top", type=int, default=20)
     ap.add_argument("--hours", type=float, default=24)
-    ap.add_argument("--market", choices=["spot", "futures"], default="futures")
+    ap.add_argument("--market", choices=["spot", "futures"], default="futures",
+                    help="스캘핑은 선물이 맞다 — 메이커 0.02% vs 현물 0.10%")
     ap.add_argument("--testnet", action="store_true")
     ap.add_argument("--symbols", default=None, help="쉼표로 직접 지정")
     ap.add_argument("--analyze", default=None, help="수집된 csv 분석")
@@ -216,7 +224,13 @@ def main():
     if a.symbols:
         syms = a.symbols.split(",")
     else:
-        syms = D.liquid_universe(a.top, 50_000_000)
+        syms = D.liquid_universe(a.top * 2, 50_000_000)
+        # 토큰화 주식·상품(XAU, SOXL, MU, CL …)은 크립토 스캘핑 대상이 아니고
+        # 호가 스트림도 안 오는 경우가 많다. 이름으로 거르지 말고 실제로 살아있는지는
+        # 로그의 '살아있는 심볼' 로 확인한다.
+        STOCKS = {"XAU","XAG","SOXL","SPCX","MU","CL","KORU","SNXX","SNDK",
+                  "SKHYNIX","SKHY","AAPL","BABA","TSLA","NVDA","AAOI","SAMSUNG"}
+        syms = [s for s in syms if s.split("/")[0] not in STOCKS][:a.top]
     logging.info(f"대상: {syms}")
     asyncio.run(collect(syms, a.hours, a.market, a.testnet))
 

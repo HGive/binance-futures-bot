@@ -73,9 +73,38 @@ def make_exchange(market="futures", testnet=False, use_pro=True, need_keys=True)
 
     ex = cls(cfg)
     if testnet:
-        ex.set_sandbox_mode(True)
-    logging.info(f"[{'TESTNET' if testnet else 'PRODUCTION'}] {market}")
+        _use_testnet(ex, market)
+    logging.info(f"[{'DEMO(테스트넷)' if testnet else 'PRODUCTION'}] {market}")
     return ex
+
+
+def _use_testnet(ex, market):
+    """데모 서버로 주소를 바꾼다.
+
+    ccxt 가 선물 sandbox 모드를 없앴다(deprecation). 그래서 직접 갈아끼운다.
+      현물 데모  https://testnet.binance.vision
+      선물 데모  https://testnet.binancefuture.com  ← 바이낸스가 'Demo Trading' 으로 부르는 그것
+    두 서버는 **키가 다르다.**
+    """
+    test = ex.urls.get("test") or {}
+    if market == "spot":
+        try:
+            ex.set_sandbox_mode(True)
+            return
+        except Exception:
+            pass
+    api = dict(ex.urls["api"])
+    for k, v in test.items():
+        if isinstance(v, str) and "binancefuture" in v if market != "spot" else True:
+            api[k] = v
+    if market != "spot":
+        # 선물 데모는 fapi/dapi 만 갈아끼운다. sapi 는 데모에 없다.
+        for k in list(api):
+            if k.startswith("fapi") or k.startswith("dapi"):
+                if k in test:
+                    api[k] = test[k]
+    ex.urls["api"] = api
+    ex.options["defaultType"] = "future" if market != "spot" else "spot"
 
 
 def public_exchange(market="spot"):
