@@ -35,15 +35,23 @@ v1: 15분봉 / 손절 ATR×2.0 / 익절 5% / 레버리지 3배 / 롱숏
      같은 격자에서 rsi_mom / none 계열은 워크포워드에서 전부 마이너스,
      stoch_dip 계열은 전부 플러스였다.
 
-결과: 워크포워드/연속 7년 +435%, PF 1.39, MDD -24%, 906거래.
+  ⑥ (v2.1) 시장 필터를 "알트가 오르는 중 + BTC 가 추세를 타는 중" 으로 바꿨다
+     BTC 100일선 하나만 보면 알트가 죽은 시기를 못 거른다.
+     PF 1.38 → 1.69, MDD -24% → -15%, 거래 907 → 568.
+
+결과: 연속 7년 +362%, PF 1.69, MDD -15%, 568거래.
+     트레일링 청산 188건의 평균 ROI 가 +116.5% — 여기서 다 번다.
 
 ────────────────────────────────────────────────────────────
 한계 — 아직 실전 배포 기준을 통과하지 못했다
 ────────────────────────────────────────────────────────────
 수익이 한 시기에 몰려 있다.
 
-  2019~2022   +432%   PF 1.97   481거래
-  2023~2026     -1%   PF 0.99   448거래     ← 최근 4년은 제자리
+  2019~2022   +372%   PF 3.16   314거래
+  2023~2026      -7%   PF 0.92   289거래     ← 최근 4년은 제자리
+
+  필터를 켜도 최근 4년의 손실은 -7% 로 작지만 플러스가 되지도 않는다.
+  필터는 나쁜 구간을 걸러줄 뿐, 없는 수익을 만들지 못한다.
 
 2021년 알트 폭등장 하나가 대부분이다. 시장 필터를 BTC MA50/MA100/시장폭(25~55%)
 어느 것으로 바꿔도 최근 4년은 살아나지 않았다 (PF 0.82~0.99).
@@ -64,7 +72,7 @@ STRATEGY_RULES.md 3.1 — 상수/신호 함수는 이 파일이 유일한 출처
 import numpy as np
 import pandas as pd
 
-VERSION = "2.0"
+VERSION = "2.1"
 
 # ── 시장 ─────────────────────────────────────────────
 MARKET = "spot"
@@ -92,7 +100,17 @@ STOP_CAP = 0.20               # 단 -20% 보다 더 내려가진 않는다 (고�
 # ── 비중 ─────────────────────────────────────────────
 TICKER_PCT = 0.03             # 티커당 자본의 3%
 MAX_CONCURRENT = 15           # 동시 15종목 → 총노출 45%, 현금 55%
-REGIME_MA_DAYS = 100          # BTC 100일선 위에서만 신규 진입
+
+# ── 시장 필터 (v2.1) ─────────────────────────────────
+#  "잘 먹히는 구간에만 작동" — 거래일의 23% 만 열린다.
+#  BTC 100일선 하나만 보던 v2.0 보다 PF 1.38 → 1.69, MDD -24% → -15%.
+#  다만 없는 수익을 만들어내진 않는다 (2023~2026 은 여전히 -7%).
+ALT_MEDIAN_DAYS = 60          # 전 종목 60일 수익률의 중앙값
+ALT_MEDIAN_MIN = 0.0          # 그 중앙값이 0 초과 = 알트가 실제로 오르는 중
+TREND_DAYS = 60               # BTC 추세성 측정 구간
+TREND_MIN = 0.20              # |60일 순변화| / 60일 일별변화절대합.
+                              # 1 에 가까우면 한 방향, 0 이면 횡보.
+                              # 횡보장 PF 0.77 vs 추세장 2.3~4.3
 
 # ── 비용 ─────────────────────────────────────────────
 FEE_RATE = 0.0005
@@ -134,6 +152,28 @@ def precompute(df: pd.DataFrame) -> dict:
 def entry_signal(pre: dict, i: int) -> bool:
     """상승 추세 안의 과매도 눌림. 이 함수가 진입 판정의 유일한 출처다."""
     return bool(pre["uptrend"][i] and pre["stoch_k"][i] < STOCH_OVERSOLD)
+
+
+def market_gate(alt_median_60d: float, btc_trendiness_60d: float) -> bool:
+    """오늘 신규 진입을 해도 되는 장인가.
+
+    이 전략은 파도가 와야 탄다. 측정치(현물 8년 507종, 진입 시점 기준):
+      BTC 추세성 0~0.15(횡보) → PF 0.77 / 0.15~0.25 → 2.34 / 0.25~0.35 → 1.02
+      알트 60일 중앙값 -30~-10% → PF 0.63 / +10~40% → 1.42 / +40%↑ → 2.65
+    둘을 같이 걸면 거래가 1092 → 568 건으로 줄고 PF 1.24 → 1.69, MDD -36% → -15%.
+    """
+    if not (np.isfinite(alt_median_60d) and np.isfinite(btc_trendiness_60d)):
+        return False          # 못 재면 안 들어간다
+    return alt_median_60d > ALT_MEDIAN_MIN and btc_trendiness_60d > TREND_MIN
+
+
+def trendiness(close: pd.Series, days: int = TREND_DAYS) -> float:
+    """|N일 순변화| ÷ N일 일별변화 절대합. 1=한 방향, 0=횡보."""
+    if len(close) < days + 1:
+        return float("nan")
+    net = abs(float(close.iloc[-1]) - float(close.iloc[-1 - days]))
+    tot = float(close.diff().abs().iloc[-days:].sum())
+    return net / tot if tot > 0 else float("nan")
 
 
 def initial_stop(entry: float, atr_now: float) -> float:

@@ -39,7 +39,8 @@ DEFAULT = dict(tf=1, ema_f=20, ema_s=120, slope=3, entry="rsi_dip",
                bar_days=None,      # None 이면 src/tf 에서 자동
                regime=0,           # BTC N일선 위에서만 신규 진입 (0이면 끔)
                stop_cap=None,      # 손절 최대 폭 (예: 0.20 → -20% 보다 더 내려가진 않는다)
-               breadth=0)          # 전체 종목 중 100일선 위 비율이 이 값 이상인 날만 (0이면 끔)
+               breadth=0,          # 전체 종목 중 100일선 위 비율이 이 값 이상인 날만 (0이면 끔)
+               gate=None)          # {일(ms): True/False} — 신규 진입 허용일. 직접 만든 필터용
 
 
 # ────────────────────────── 데이터 ──────────────────────────
@@ -227,7 +228,8 @@ def build(cfg, syms=None):
 
 # ────────────────────────── 시뮬 ──────────────────────────
 class Pos:
-    __slots__ = ("side", "qty", "entry", "margin", "sl", "best", "partial", "trail", "open_i")
+    __slots__ = ("side", "qty", "entry", "margin", "sl", "best", "partial", "trail",
+                 "open_i", "open_ts")
 
 
 def _signal(P, i, cfg):
@@ -257,7 +259,9 @@ def simulate(pre, order, a_ms, b_ms, cash, cfg):
         bar_days = cfg["tf"] * 15 / 1440.0
     # 현물은 펀딩비가 없고 레버리지도 못 쓴다
     fund_bar = 0.0 if cfg.get("src") == "spot1d" else FUND_PER_DAY * bar_days
-    if cfg.get("breadth"):
+    if cfg.get("gate") is not None:
+        reg = cfg["gate"]
+    elif cfg.get("breadth"):
         reg = breadth_regime(cfg["breadth"], cfg.get("src", "fut15m"))
     elif cfg.get("regime"):
         reg = btc_regime(cfg["regime"], cfg.get("src", "fut15m"))
@@ -294,6 +298,7 @@ def simulate(pre, order, a_ms, b_ms, cash, cfg):
                     pnl = q * (fill - p.entry) * sign - q * fill * FEE
                     cash += p.margin * 0.5 + pnl
                     trades.append(dict(sym=sym, side=p.side, reason="PARTIAL", ts=ts,
+                                       entry_ts=p.open_ts, bars=i - p.open_i,
                                        margin=p.margin * 0.5, pnl=pnl, roi=pnl / (p.margin * 0.5)))
                     p.qty -= q; p.margin *= 0.5
                     p.partial = True; p.trail = True; p.sl = p.entry
@@ -308,6 +313,7 @@ def simulate(pre, order, a_ms, b_ms, cash, cfg):
                 pnl = max((fill - p.entry) * sign * p.qty - p.qty * fill * FEE, -p.margin)
                 cash += p.margin + pnl
                 trades.append(dict(sym=sym, side=p.side, reason=hit, ts=ts,
+                                   entry_ts=p.open_ts, bars=i - p.open_i,
                                    margin=p.margin, pnl=pnl, roi=pnl / p.margin))
                 del pos[sym]
                 eq = cash + sum(x.margin for x in pos.values())
@@ -344,6 +350,7 @@ def simulate(pre, order, a_ms, b_ms, cash, cfg):
         liq = fill * (1 - sign * (1 / lev - MMR))
         n.sl = max(n.sl, liq) if sign > 0 else min(n.sl, liq)
         n.best, n.partial, n.trail, n.open_i = fill, False, False, i
+        n.open_ts = int(ts)
         pos[sym] = n
 
     # 구간 끝에 남은 포지션을 원가로 계산하면 손실이 숨는다.
@@ -359,6 +366,7 @@ def simulate(pre, order, a_ms, b_ms, cash, cfg):
         pnl = max((fill - p.entry) * sign * p.qty - p.qty * fill * FEE, -p.margin)
         cash += p.margin + pnl
         trades.append(dict(sym=sym, side=p.side, reason="OPEN_END", ts=int(P["ts"][j]),
+                           entry_ts=p.open_ts, bars=j - p.open_i,
                            margin=p.margin, pnl=pnl, roi=pnl / p.margin))
     eq = cash
     peak = max(peak, eq); mdd = min(mdd, eq / peak - 1)

@@ -29,6 +29,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import config
 import strategies.hibernate as S
 from backtest import data as D
+from live import ai_gate
 
 STATE_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "logs")
 DAY_MS = 86_400_000
@@ -523,13 +524,23 @@ class HibernateBot:
         if self.state.d.get("halted"):
             logging.warning("정지 상태 — 신규 진입 없음")
             return
+
+        # AI 개입 — 줄이는 방향만 반영된다 (live/ai_gate.py)
+        g = ai_gate.read("hibernate")
+        if g["active"]:
+            logging.warning(f"AI 개입: 신규진입 {'허용' if g['allow_new'] else '금지'} / "
+                            f"비중 x{g['size_mult']:.2f}  — {g['reason']}")
+        if not g["allow_new"]:
+            logging.warning("AI 개입으로 신규 진입 없음")
+            return
+
         if len(self.state.pos) >= S.MAX_CONCURRENT:
             logging.info(f"자리 {S.MAX_CONCURRENT}개 다 참 — 신규 진입 없음")
             return
         if not self.btc_ok():
             return
 
-        budget = eq * S.TICKER_MARGIN_PCT
+        budget = eq * S.TICKER_MARGIN_PCT * g["size_mult"]
         cands = self.candidates()
         logging.info(f"진입 후보 {len(cands)}종, 1종목당 {budget:,.2f} USDT")
         for dr, sym, i in cands[:20]:
