@@ -1,9 +1,11 @@
-/venv
-.venv/
-.idea/
-.env
-__pycache__/
-*.log
-.idea/
 
+*.log
+.env
+.idea/
+.venv/
+/venv
+__pycache__/
+logs/*.json
+logs/*.jsonl
+logs/*.log
 poetry.lockdata/
