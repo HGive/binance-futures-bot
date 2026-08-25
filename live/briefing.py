@@ -22,19 +22,11 @@ CACHE = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 DAY = 86_400_000
 
 
-def load_daily(min_rows=150):
-    import glob
-    out = {}
-    for p in glob.glob(os.path.join(CACHE, "spot_*_1d.csv")):
-        try:
-            d = pd.read_csv(p)
-        except Exception:
-            continue
-        if len(d) < min_rows:
-            continue
-        sym = os.path.basename(p)[len("spot_"):-len("_1d.csv")].replace("_", "/")
-        out[sym] = d.drop_duplicates("timestamp").sort_values("timestamp").reset_index(drop=True)
-    return out
+def load_daily(min_rows=500):
+    """전략이 시장 상태를 재는 것과 **같은 유니버스**를 쓴다 (live/adapters.market_universe).
+    안 맞추면 브리핑과 봇이 다른 판단을 한다 — 실제로 +0.0% 대 +8.1% 로 갈렸었다."""
+    from live.adapters import market_universe
+    return market_universe(min_rows)
 
 
 def market_state(daily=None):
