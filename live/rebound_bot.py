@@ -213,6 +213,28 @@ class Bot:
             self.save()
             logging.info(f"[미체결취소] {sym} {S.ENTRY_WAIT_BARS}분 안에 안 붙었다")
 
+    # ── 손절은 '알고 주문' 이다 ─────────────────────────
+    #  바이낸스가 선물 STOP_MARKET 을 일반 주문 엔드포인트에서 막았다(-4120).
+    #  그래서 조건부 주문은 algoId 를 받고, fetch_order / fetch_open_orders 로는
+    #  절대 안 보인다. 전용 API 로만 조회·취소된다. 이걸 모르면 손절이 걸렸는지
+    #  영영 확인 못 하고 시간초과로만 나가게 된다.
+    async def algo_status(self, algo_id):
+        """NEW / FILLED / CANCELLED / EXPIRED ... 못 찾으면 None."""
+        try:
+            r = await self.ex.fapiPrivateGetAlgoOrder({"algoId": str(algo_id)})
+            return r.get("algoStatus")
+        except Exception as e:
+            logging.warning(f"  알고 주문 {algo_id} 조회 실패: {e}")
+            return None
+
+    async def algo_cancel(self, algo_id):
+        try:
+            await self.ex.fapiPrivateDeleteAlgoOrder({"algoId": str(algo_id)})
+            return True
+        except Exception as e:
+            logging.warning(f"  알고 주문 {algo_id} 취소 실패: {e}")
+            return False
+
     async def on_fill(self, sym, entry, qty):
         tp, sl = S.exit_prices(entry)
         ids = {}
@@ -255,18 +277,27 @@ class Bot:
             if hi >= p["tp"]:
                 return await self.settle(sym, p["tp"], "TP")
         else:
-            for tag in ("tp", "sl"):
-                oid = p["ids"].get(tag)
-                if not oid:
-                    continue
+            oid = p["ids"].get("tp")
+            if oid:
                 try:
                     o = await self.ex.fetch_order(oid, sym)
+                    if o.get("status") == "closed":
+                        px = float(o.get("average") or p["tp"])
+                        await self.cancel_rest(sym, p, skip="tp")
+                        return await self.settle(sym, px, "TP")
                 except Exception:
-                    continue
-                if o.get("status") == "closed":
-                    px = float(o.get("average") or (p["tp"] if tag == "tp" else p["sl"]))
-                    await self.cancel_rest(sym, p, skip=tag)
-                    return await self.settle(sym, px, tag.upper())
+                    pass
+            aid = p["ids"].get("sl")
+            if aid:
+                st = await self.algo_status(aid)
+                if st in ("FILLED", "TRIGGERED", "PARTIALLY_FILLED"):
+                    await self.cancel_rest(sym, p, skip="sl")
+                    return await self.settle(sym, p["sl"], "SL")
+                if st in ("CANCELLED", "EXPIRED", "REJECTED"):
+                    # 손절이 사라졌는데 포지션은 남았다 = 규칙 3.5 위반 상태.
+                    logging.error(f"{sym} 손절이 거래소에서 사라졌다({st}) — 즉시 정리한다")
+                    await self.cancel_rest(sym, p, skip="sl")
+                    return await self.close(sym, cl, p["qty"], "STOP_GONE")
 
         if p["bars"] >= S.MAX_HOLD_BARS:
             await self.cancel_rest(sym, p)
@@ -276,12 +307,15 @@ class Bot:
         if self.dry:
             return
         for tag, oid in (p.get("ids") or {}).items():
-            if tag == skip:
+            if tag == skip or not oid:
                 continue
-            try:
-                await self.ex.cancel_order(oid, sym)
-            except Exception:
-                pass
+            if tag == "sl":
+                await self.algo_cancel(oid)
+            else:
+                try:
+                    await self.ex.cancel_order(oid, sym)
+                except Exception:
+                    pass
 
     async def close(self, sym, price, qty, reason):
         if not self.dry:
@@ -307,9 +341,131 @@ class Bot:
         self.save()
         logging.info(f"[청산] {sym} {reason} {ret*100:+.2f}% (자본기준 {ret*S.LEVERAGE*100:+.2f}%)")
 
+    # ── 주문 경로 점검 ──────────────────────────────────
+    async def probe(self, sym, usdt):
+        """신호를 기다리지 않고 실제 주문 흐름을 그대로 한 번 태운다.
+        지정가 매수 → 체결 확인 → 익절/손절 등록 → 정리. 데모에서만."""
+        await self.ex.load_markets()
+        if sym not in self.ex.markets:
+            logging.error(f"{sym} 이 데모에 없다. 가능한 예: BTC/USDT:USDT"); return
+        t = await self.ex.fetch_ticker(sym)
+        last = float(t["last"])
+        # 바로 붙게 현재가보다 살짝 위에 건다 (경로 점검이 목적이지 가격이 목적이 아니다)
+        limit = last * 1.001
+        notional = usdt * S.LEVERAGE
+        qty = float(self.ex.amount_to_precision(sym, notional / limit))
+        limit = float(self.ex.price_to_precision(sym, limit))
+        logging.warning(f"[점검] {sym} 지정가 {limit} × {qty} (증거금 {usdt} × {S.LEVERAGE}배)")
+
+        try:
+            await self.ex.set_leverage(S.LEVERAGE, sym)
+            logging.info(f"  레버리지 {S.LEVERAGE}배 설정 OK")
+        except Exception as e:
+            logging.warning(f"  레버리지 설정 실패: {e}")
+
+        try:
+            o = await self.ex.create_order(sym, "limit", "buy", qty, limit)
+            logging.info(f"  매수 주문 OK id={o['id']}")
+        except Exception as e:
+            logging.error(f"  매수 주문 실패: {e}"); return
+
+        filled, avg = 0.0, limit
+        for k in range(10):
+            await asyncio.sleep(1)
+            try:
+                q = await self.ex.fetch_order(o["id"], sym)
+            except Exception as e:
+                logging.warning(f"  주문 조회 실패: {e}"); continue
+            filled = float(q.get("filled") or 0)
+            if filled > 0:
+                avg = float(q.get("average") or limit)
+                logging.info(f"  체결 확인 {filled} @ {avg} ({k+1}초 만에)")
+                break
+        if filled <= 0:
+            logging.error("  10초 안에 체결 안 됨 — 취소하고 끝낸다")
+            try:
+                await self.ex.cancel_order(o["id"], sym)
+            except Exception as e:
+                logging.warning(f"  취소 실패: {e}")
+            return
+
+        await self.on_fill(sym, avg, filled)
+        p = self.d["positions"].get(sym)
+        if p and p.get("ids"):
+            logging.info(f"  거래소 등록 확인 — 익절 id={p['ids'].get('tp')} "
+                         f"손절 id={p['ids'].get('sl')}")
+            try:
+                oo = await self.ex.fetch_open_orders(sym)
+                logging.info(f"  일반 주문 {len(oo)}건: "
+                             + ", ".join(f"{x['type']}@{x.get('price')}" for x in oo))
+            except Exception as e:
+                logging.warning(f"  미체결 조회 실패: {e}")
+            st = await self.algo_status(p["ids"].get("sl"))
+            logging.info(f"  손절(알고 주문) 상태: {st}"
+                         + ("  ← 거래소에 살아있다" if st == "NEW" else "  ← 문제!"))
+
+        logging.warning("  정리한다 (익절/손절 취소 후 시장가 청산)")
+        await self.cancel_rest(sym, p or {})
+        await self.close(sym, avg, filled, "PROBE")
+        try:
+            oo = await self.ex.fetch_open_orders(sym)
+            pos = await self.ex.fetch_positions([sym])
+            amt = sum(abs(float(x.get("contracts") or 0)) for x in pos)
+            logging.info(f"  정리 후 — 남은 주문 {len(oo)}건 / 남은 포지션 {amt}")
+        except Exception as e:
+            logging.warning(f"  정리 확인 실패: {e}")
+        logging.warning("[점검 끝]")
+
+    # ── 고아 주문 청소 ──────────────────────────────────
+    async def reconcile(self):
+        """거래소에 남아있는데 내 장부에 없는 주문/포지션을 정리한다.
+
+        조건부 주문(손절)은 알고 주문이라 fetch_open_orders 에 안 잡힌다.
+        봇이 죽거나 청산이 어긋나면 **포지션 없는 손절**이 남는다.
+        그대로 두면 다음 진입 때 엉뚱하게 터진다. 시작할 때마다 쓸어낸다.
+        """
+        if self.dry:
+            return
+        mine = set(self.d["positions"])
+        try:
+            r = await self.ex.fapiPrivateGetOpenAlgoOrders({})
+        except Exception as e:
+            logging.warning(f"알고 주문 조회 실패: {e}"); return
+        algos = r if isinstance(r, list) else (r.get("orders") or [])
+        keep = {str((self.d["positions"].get(s_) or {}).get("ids", {}).get("sl"))
+                for s_ in mine}
+        killed = 0
+        for a in algos:
+            aid = str(a.get("algoId"))
+            if aid in keep:
+                continue
+            if await self.algo_cancel(aid):
+                killed += 1
+                logging.warning(f"[청소] 장부에 없는 손절 취소 — {a.get('symbol')} "
+                                f"{a.get('orderType')} @{a.get('triggerPrice')}")
+        try:
+            pos = await self.ex.fetch_positions()
+        except Exception as e:
+            logging.warning(f"포지션 조회 실패: {e}")
+            pos = []
+        for p in pos:
+            q = abs(float(p.get("contracts") or 0))
+            if q <= 0 or p["symbol"] in mine:
+                continue
+            side = "sell" if p.get("side") == "long" else "buy"
+            logging.warning(f"[청소] 장부에 없는 포지션 정리 — {p['symbol']} {side} {q}")
+            try:
+                await self.ex.create_order(p["symbol"], "market", side, q,
+                                           None, {"reduceOnly": True})
+                killed += 1
+            except Exception as e:
+                logging.error(f"  정리 실패: {e}")
+        logging.info(f"청소 완료 — 처리 {killed}건 / 내 장부 {len(mine)}종")
+
     # ── 메인 루프 ───────────────────────────────────────
     async def run(self):
         syms = await self.universe()
+        await self.reconcile()
         await self.prime(syms)
         logging.info(f"REBOUND v{S.VERSION} 시작 — 모드 {self.mode} / "
                      f"레버리지 {S.LEVERAGE}배 / 동시 {self.max_conc}칸")
@@ -361,11 +517,23 @@ def main():
     ap.add_argument("--max-conc", type=int, default=3)
     ap.add_argument("--usdt", type=float, default=None, help="1건당 증거금 고정 (시드가 적을 때)")
     ap.add_argument("--i-know", action="store_true")
+    ap.add_argument("--probe", default=None, metavar="심볼",
+                    help="신호 무시하고 주문 경로만 한 번 태운다 (예: BTC/USDT:USDT)")
+    ap.add_argument("--probe-usdt", type=float, default=5.0)
     a = ap.parse_args()
     if a.mode == "live" and not a.i_know:
         print("REBOUND 는 아직 v0.x 다. 실전은 --i-know 를 붙여라."); sys.exit(1)
     os.environ.setdefault("LOG_FILENAME", f"rebound_{a.mode}.log")
-    asyncio.run(Bot(a.mode, a.top, a.seed, a.max_conc, a.usdt).run())
+    bot = Bot(a.mode, a.top, a.seed, a.max_conc, a.usdt)
+    if a.probe:
+        if a.mode == "live":
+            print("--probe 는 실전에서 못 쓴다."); sys.exit(1)
+        async def go():
+            await bot.probe(a.probe, a.probe_usdt)
+            await bot.ex.close()
+        asyncio.run(go())
+    else:
+        asyncio.run(bot.run())
 
 
 if __name__ == "__main__":
