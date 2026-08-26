@@ -25,6 +25,7 @@ FEE = 0.0005
 SLIP = 0.0003
 WARMUP = 200
 RET_CAP = 3.0
+GATE_MAP = {}
 
 DEFAULT = dict(
     squeeze_win=90,      # ATR 비율이 최근 N일 중 최저권인가
@@ -39,6 +40,33 @@ DEFAULT = dict(
     max_conc=10,
     min_qv=1_000_000,
 )
+
+
+def market_maps(daily, dates):
+    """SURFER v2.1 시장 필터를 날짜별로 미리 계산 (알트 60일 중앙값 / BTC 추세성)."""
+    import strategies.surfer as SF
+    rets = {}
+    for s_, d in daily.items():
+        c = d["close"].astype(float)
+        rets[s_] = dict(zip(d["dt"].values, (c / c.shift(SF.ALT_MEDIAN_DAYS) - 1).values))
+    btc = daily.get("BTC/USDT")
+    bmap = {}
+    if btc is not None:
+        c = btc["close"].astype(float).values
+        ts = btc["dt"].values
+        n = SF.TREND_DAYS
+        dif = np.abs(np.diff(c, prepend=c[0]))
+        for i in range(n + 1, len(c)):
+            tot = dif[i - n + 1:i + 1].sum()
+            bmap[ts[i]] = (abs(c[i] - c[i - n]) / tot) if tot > 0 else np.nan
+    gate = {}
+    for t in dates:
+        vals = [rets[s_][t] for s_ in rets if t in rets[s_] and np.isfinite(rets[s_][t])]
+        med = float(np.median(vals)) if len(vals) >= 30 else np.nan
+        tr = bmap.get(t, np.nan)
+        gate[t] = bool(np.isfinite(med) and np.isfinite(tr)
+                       and med > SF.ALT_MEDIAN_MIN and tr > SF.TREND_MIN)
+    return gate
 
 
 def load_daily(min_days=400):
@@ -138,14 +166,28 @@ def simulate(pre, dates, cfg, seed=1000.0, random_entry=False, rng=None):
             p = pos[sym]
             P = pre[sym]
             i = idx[sym].get(today)
-            if i is None or i <= p.i0:
+            if i is None or i < p.i0:
                 continue
-            lo, hi, cl = P["l"][i], P["h"][i], P["c"][i]
+            op, lo, hi, cl = P["o"][i], P["l"][i], P["h"][i], P["c"][i]
+            if i == p.i0:
+                # 진입 봉. 익절/트레일링은 봉 안 경로를 모르니 안 한다(규칙 3.3).
+                # 다만 손절은 **반드시 본다** — 거래소에 걸어둔 주문이라 그날 바로 맞는다.
+                # 이걸 다음 봉으로 미루면 손절이 좁을수록 시뮬이 거짓말을 한다.
+                if lo <= p.stop:
+                    fill = p.stop * (1 - SLIP)
+                    proceeds = p.qty * fill * (1 - FEE)
+                    cash += proceeds
+                    trades.append(dict(sym=sym, ret=min(proceeds / p.cost - 1, RET_CAP),
+                                       reason="STOP", days=0, dt=today))
+                    del pos[sym]
+                continue
             exit_px = None
             reason = ""
-            # 손절 우선
+            # 손절 우선. 시가가 이미 손절선 아래면 그 가격에 맞는다 (갭).
+            # 손절이 좁을수록 이게 성적을 좌우한다 — -2% 손절에 -10% 갭이면 5배 손해다.
             if lo <= p.stop:
-                exit_px, reason = p.stop, "STOP" if not p.trailing else "TRAIL"
+                exit_px = min(p.stop, op)
+                reason = "TRAIL" if p.trailing else "STOP"
             else:
                 p.peak = max(p.peak, hi)
                 if not p.trailing and p.peak >= p.entry * (1 + cfg["trail_start"]):
@@ -164,6 +206,10 @@ def simulate(pre, dates, cfg, seed=1000.0, random_entry=False, rng=None):
                 del pos[sym]
 
         # ── 신규 진입 ──
+        if cfg.get("gate") and not GATE_MAP.get(today, False):
+            eq = cash + sum(p.qty * pre[s]["c"][idx[s].get(today, p.i0)] for s, p in pos.items())
+            curve.append(eq)
+            continue
         if len(pos) < cfg["max_conc"]:
             eq = cash + sum(p.qty * pre[s]["c"][idx[s].get(today, p.i0)] for s, p in pos.items())
             cands = []
@@ -235,6 +281,7 @@ def main():
     ap.add_argument("--baseline", action="store_true")
     ap.add_argument("--n-control", type=int, default=20)
     ap.add_argument("--entry", default="coil", choices=["coil", "surfer", "any"])
+    ap.add_argument("--gate", action="store_true", help="SURFER v2.1 시장 필터를 켠다")
     ap.add_argument("--cap", type=float, default=3.0, help="거래당 수익 상한 (데이터 이상치 차단)")
     for k, v in DEFAULT.items():
         ap.add_argument(f"--{k.replace('_','-')}", type=type(v), default=None)
@@ -246,11 +293,15 @@ def main():
         if v is not None:
             cfg[k] = v
     cfg["entry"] = args.entry
+    cfg["gate"] = args.gate
     globals()["RET_CAP"] = args.cap
 
     daily = load_daily()
     print(f"심볼 {len(daily)}종")
     dates = np.array(sorted(set(np.concatenate([d["dt"].values for d in daily.values()]))))
+    if args.gate:
+        globals()["GATE_MAP"] = market_maps(daily, dates)
+        print(f"시장 필터 켜짐 — 거래일의 {np.mean(list(GATE_MAP.values()))*100:.0f}% 만 열린다")
 
     def run(c, random_entry=False, seed_rng=0):
         pre = {s: precompute(d, c) for s, d in daily.items()}

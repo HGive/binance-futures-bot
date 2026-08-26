@@ -119,7 +119,7 @@ def header():
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--mode", default="base",
-                    choices=["base", "grid", "latency", "period", "control"])
+                    choices=["base", "grid", "latency", "period", "control", "oos"])
     ap.add_argument("--min-bars", type=int, default=20000)
     args = ap.parse_args()
 
@@ -174,6 +174,17 @@ def main():
         print("\n종목별 상위/하위 5")
         by = f.groupby("sym")["ret"].agg(["count", "sum", "mean"]).sort_values("sum")
         print(by.tail(5).to_string()); print(by.head(5).to_string())
+
+    elif args.mode == "oos":
+        # 파라미터는 2026-04~08 자료로 골랐다. 그 앞 구간은 손대지 않은 자료다.
+        CUT = pd.Timestamp("2026-04-01", tz="UTC").value // 10**6
+        df = simulate(data, **D)
+        f = df[df.filled == 1].copy()
+        header()
+        for tag, g in [("파라미터 고를 때 안 쓴 구간 (~2026-03)", f[f.ts < CUT]),
+                       ("파라미터 고른 구간 (2026-04~)", f[f.ts >= CUT])]:
+            line(tag, stats(g))
+        print("\n※ 앞 구간이 뒤 구간과 비슷하면 과최적화가 아니다.")
 
     elif args.mode == "control":
         header()
