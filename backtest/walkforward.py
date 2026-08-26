@@ -13,7 +13,7 @@
 자본은 검증 구간들을 가로질러 계속 이어진다(포지션도 유지). 파라미터는 진입 조건만
 바뀌고 청산 규칙은 고정이므로, 창이 바뀌어도 보유 포지션 처리에 모순이 없다.
 """
-import os, sys, glob, argparse, itertools
+import json, os, sys, glob, argparse, itertools
 import numpy as np
 import pandas as pd
 
@@ -272,6 +272,7 @@ if __name__ == "__main__":
     ap.add_argument("--split-first", type=float, default=None, help="1차 목표에서 파는 비중")
     ap.add_argument("--atl-age", type=int, default=None, help="최저가가 며칠 전 것이어야 하는가")
     ap.add_argument("--max-hold", type=int, default=None, help="이 일수 넘게 안 끝나면 정리")
+    ap.add_argument("--only", default="", help="이 JSON 목록에 있는 심볼만 (선물 상장 종목만 돌릴 때)")
     ap.add_argument("--strategy", default="drought",
                     choices=["drought", "uptrend_dip", "both"])
     args = ap.parse_args()
@@ -300,6 +301,11 @@ if __name__ == "__main__":
     if args.split_first is not None:
         S.SPLIT_AT_FIRST = args.split_first
     symbols, daily = load_all(market="spot")
+    if args.only:
+        keep = set(json.load(open(args.only)))
+        symbols = [s_ for s_ in symbols if s_ in keep]
+        daily = {s_: daily[s_] for s_ in symbols}
+        print(f"[심볼 제한] {args.only} → {len(symbols)}종")
     pre = base_arrays(symbols, daily)
     dates = np.array(sorted(set(np.concatenate([daily[s]["dt"].values for s in symbols]))))
     idx = {s: {t: i for i, t in enumerate(daily[s]["dt"].values)} for s in symbols}

@@ -36,6 +36,7 @@ def main():
     ap.add_argument("--force-strategy", default="hibernate")
     ap.add_argument("--force-usdt", type=float, default=None)
     ap.add_argument("--close-all", action="store_true")
+    ap.add_argument("--status", action="store_true", help="상태만 출력하고 종료 (감독용, 매매 안 함)")
     a = ap.parse_args()
 
     if a.mode == "live" and not a.i_know:
@@ -51,6 +52,42 @@ def main():
     engines = []
     for k in keys:
         engines.append(Engine(k, a.mode, seed=a.seed, top=a.top, shared=shared))
+
+    if a.status:
+        from live import ai_gate
+        out = []
+        for e in engines:
+            try:
+                eq = e.equity()
+            except Exception as ex:
+                out.append(f"### {e.A.name}: 거래소 조회 실패 — {ex}"); continue
+            g = ai_gate.read(e.A.key)
+            if e.state.pos:
+                try:
+                    e.refresh(list(e.state.pos))
+                except Exception as ex:
+                    out.append(f"  (시세 갱신 실패: {ex})")
+            out.append(f"### {e.A.name}  (모드 {a.mode})")
+            out.append(f"- 평가액 {eq:,.2f} USDT / 현금 {e.free_usdt():,.2f}")
+            out.append(f"- 게이트: {'활성' if g['active'] else '없음'} "
+                       f"신규진입 {'허용' if g['allow_new'] else '금지'} 비중x{g['size_mult']}"
+                       + (f" — {g['reason']}" if g.get('reason') else ""))
+            ps = e.state.pos
+            out.append(f"- 보유 {len(ps)}종 / 칸 {e.A.max_concurrent}")
+            for sym, p in ps.items():
+                px = e.last_price(sym)
+                pnl = (px / p["entry"] - 1) if px and p.get("entry") else float("nan")
+                out.append(f"    {sym}  진입 {p.get('entry')}  현재 {px}  "
+                           f"손익 {pnl*100:+.1f}%  손절 {p.get('stop')}  "
+                           f"거래소손절 {'O' if p.get('exchange_stop') else 'X'}")
+            hist = e.state.d.get("history", [])[-5:]
+            if hist:
+                out.append("- 최근 청산 5건: " + ", ".join(
+                    f"{h.get('sym')}({h.get('reason')},{h.get('ret',0)*100:+.1f}%)" for h in hist))
+            upd = e.state.d.get("updated")
+            out.append(f"- 상태 갱신 {upd}")
+        print("\n".join(out))
+        return
 
     if a.close_all:
         for e in engines:
