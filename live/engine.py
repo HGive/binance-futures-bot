@@ -170,6 +170,25 @@ class Engine:
     def _mkt(self, sym):
         return (self.ex if self.ex else self.data_ex).market(sym)
 
+    def _sell_cap(self, sym):
+        """현물 매도 지정가에는 상한이 있다 (PERCENT_PRICE_BY_SIDE askMultiplierUp).
+
+        바이낸스 현물은 최근 5분 평균가의 2배를 넘는 매도 지정가를 거부한다.
+        HIBERNATE 의 2차 목표는 진입가의 정확히 2.00 배라서 진입 직후엔 늘 걸린다.
+        가격이 오르면 상한도 같이 오르므로, 처음엔 상한 바로 아래에 걸고
+        나중에 진짜 목표로 올린다 (daily_tick 의 refresh_exits).
+        """
+        try:
+            f = (self._mkt(sym).get("info") or {}).get("filters") or []
+            mult = next((float(x["askMultiplierUp"]) for x in f
+                         if x.get("filterType") == "PERCENT_PRICE_BY_SIDE"), None)
+            if not mult:
+                return None
+            px = self.live_price(sym)
+            return px * mult * 0.995 if px else None
+        except Exception:
+            return None
+
     def _fits(self, sym, amount, price):
         lim = self._mkt(sym).get("limits", {})
         amin = (lim.get("amount") or {}).get("min")
@@ -226,6 +245,12 @@ class Engine:
             return {"id": f"paper-oco-{sym}-{tp:.8f}"}, True
         free = float(self.ex.fetch_balance().get(sym.split("/")[0], {}).get("free") or 0)
         amt = float(self.ex.amount_to_precision(sym, min(amount, free)))
+        cap = self._sell_cap(sym)
+        capped = bool(cap and tp > cap)
+        if capped:
+            logging.info(f"[{sym}] 익절 {tp:.8g} 이 거래소 상한 {cap:.8g} 초과 — "
+                         f"일단 상한 아래로 걸고 가격이 오르면 올린다")
+            tp = cap
         tpp = float(self.ex.price_to_precision(sym, tp))
         stp = float(self.ex.price_to_precision(sym, stop))
         stl = float(self.ex.price_to_precision(sym, stop * (1 - STOP_LIMIT_GAP)))
@@ -241,8 +266,10 @@ class Engine:
                 "stopPrice": self.ex.price_to_precision(sym, stp),
                 "stopLimitPrice": self.ex.price_to_precision(sym, stl),
                 "stopLimitTimeInForce": "GTC"})
-            logging.info(f"[{sym}] OCO 익절 {tpp:.8g} / 손절 {stp:.8g} 수량 {amt:.6g}")
-            return {"id": str(o.get("orderListId") or o.get("listClientOrderId")), "oco": True}, True
+            logging.info(f"[{sym}] OCO 익절 {tpp:.8g} / 손절 {stp:.8g} 수량 {amt:.6g}"
+                         + ("  (익절은 임시 상한값)" if capped else ""))
+            return {"id": str(o.get("orderListId") or o.get("listClientOrderId")),
+                    "oco": True, "capped": capped, "placed_tp": tpp}, True
         except Exception as e:
             logging.warning(f"[{sym}] OCO 실패({type(e).__name__}: {e}) — 지정가만, 손절은 코드로")
             return self.sell_limit(sym, amt, tpp), False
@@ -303,12 +330,15 @@ class Engine:
             if p.get("runner"):
                 o, oco = self.sell_oco(sym, p["qty"], p["tp2"], p["stop"])
                 p["tp2_id"], p["tp2_oco"] = (o["id"] if o else None), bool(oco)
+                p["tp2_capped"] = bool(o and o.get("capped"))
                 p["exchange_stop"] = bool(oco); return
             q1 = p["qty"] * p["split"]
             o1, k1 = self.sell_oco(sym, q1, p["tp1"], p["stop"])
             o2, k2 = self.sell_oco(sym, p["qty"] - q1, p["tp2"], p["stop"])
             p["tp1_id"], p["tp1_oco"] = (o1["id"] if o1 else None), bool(k1)
             p["tp2_id"], p["tp2_oco"] = (o2["id"] if o2 else None), bool(k2)
+            p["tp1_capped"] = bool(o1 and o1.get("capped"))
+            p["tp2_capped"] = bool(o2 and o2.get("capped"))
             p["exchange_stop"] = bool(k1 and k2)
         else:
             o = self.sell_stop(sym, p["qty"], p["stop"])
@@ -458,6 +488,69 @@ class Engine:
                 self.close(sym, "DELISTED", 1.0)
 
     # ── 하루 1회 ───────────────────────────────────────────
+    def sweep_orphans(self):
+        """봇이 아는 주문이 아닌데 거래소에 남아있는 매도 주문을 취소한다.
+
+        OCO 등록이 중간에 실패하거나 봇이 죽으면, 포지션은 없는데 매도 주문만 남는다.
+        그대로 두면 잔고가 묶이고, 나중에 그 종목을 다시 샀을 때 엉뚱하게 팔린다.
+        범위는 **봇이 다뤄본 종목**으로만 제한한다 (손으로 낸 주문을 건드리지 않게).
+        """
+        if self.dry:
+            return
+        known = set()
+        for pp in self.state.pos.values():
+            for k in ("tp1_id", "tp2_id", "stop_id"):
+                if pp.get(k):
+                    known.add(str(pp[k]))
+        touched = set(self.state.pos) | {h.get("symbol") for h in self.state.d.get("history", [])}
+        killed = 0
+        for sym in sorted(x for x in touched if x):
+            try:
+                oo = self.ex.fetch_open_orders(sym)
+            except Exception:
+                continue
+            for o in oo:
+                oid = str(o.get("id"))
+                lid = str((o.get("info") or {}).get("orderListId") or "")
+                if oid in known or (lid and lid in known):
+                    continue
+                try:
+                    self.cancel(sym, lid if lid not in ("", "-1") else oid,
+                                oco=bool(lid and lid != "-1"))
+                    killed += 1
+                    logging.warning(f"[청소] 장부에 없는 주문 취소 — {sym} {o.get('type')} "
+                                    f"{o.get('side')} {o.get('amount')} @ {o.get('price')}")
+                except Exception as e:
+                    logging.warning(f"[청소] {sym} {oid} 취소 실패: {e}")
+        if killed:
+            logging.warning(f"[청소] 총 {killed}건 정리")
+
+    def refresh_exits(self):
+        """거래소 상한 때문에 낮게 걸린 익절을, 가격이 올라 여유가 생기면 제 목표로 다시 건다.
+
+        안 하면 2차 목표가 진입가 2.00 배가 아니라 상한값(진입 시점 가격의 1.99 배)에
+        걸린 채로 남는다. 큰 차이는 아니지만 백테스트와 다른 물건이 된다.
+        """
+        if self.dry or not self.A.uses_oco:
+            return
+        for sym, p in list(self.state.pos.items()):
+            for tag, tpk, idk, ock in (("tp1_capped", "tp1", "tp1_id", "tp1_oco"),
+                                       ("tp2_capped", "tp2", "tp2_id", "tp2_oco")):
+                if not p.get(tag) or not p.get(idk):
+                    continue
+                cap = self._sell_cap(sym)
+                if cap is None or cap < p[tpk]:
+                    continue                      # 아직 여유가 없다
+                q = p["qty"] * (p["split"] if tpk == "tp1" else 1 - p["split"])
+                if p.get("runner"):
+                    q = p["qty"]
+                logging.info(f"[{sym}] 여유 생김 — {tpk} 를 제 목표 {p[tpk]:.8g} 로 다시 건다")
+                self.cancel(sym, p[idk], oco=bool(p.get(ock)))
+                o, k = self.sell_oco(sym, q, p[tpk], p["stop"])
+                p[idk], p[ock] = (o["id"] if o else None), bool(k)
+                p[tag] = bool(o and o.get("capped"))
+        self.state.save()
+
     def daily_tick(self, syms=None):
         logging.info("=" * 64)
         logging.info(f"{self.A.name} [{self.mode}] {datetime.now(timezone.utc):%Y-%m-%d %H:%M} UTC")
@@ -465,6 +558,8 @@ class Engine:
         self.refresh(sorted(set(syms) | set(self.state.pos) | {"BTC/USDT"}))
         self.compute()
         self.manage()
+        self.sweep_orphans()
+        self.refresh_exits()
 
         eq, free = self.equity(), self.free_usdt()
         logging.info(f"자산 {eq:,.2f} / 현금 {free:,.2f} / 보유 {len(self.state.pos)}종")
