@@ -79,7 +79,7 @@ class Bot:
         self.ex = config.make_exchange("futures", testnet=(mode != "live"),
                                        use_pro=True, need_keys=not self.dry)
         self.books = {}
-        self.lags, self.nbar, self.beat = [], 0, 30
+        self.lags, self.nbar, self.beat = [], 0, 500
         self.d = {"positions": {}, "pending": {}, "history": [], "cash": seed}
         if os.path.exists(STATE):
             try:
