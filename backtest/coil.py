@@ -128,6 +128,25 @@ def sig_surfer(P, i, cfg):
     return bool(np.isfinite(ma) and ma >= cfg["min_qv"])
 
 
+def sig_dip(P, i, cfg):
+    """HIBERNATE/REBOUND 의 원리를 SURFER 골격에 붙인다 —
+    크게 빠져서 바닥권인 종목이 처음 반등할 때 사서, 트레일링으로 끝까지 따라간다."""
+    w = cfg["squeeze_win"]
+    if i < w + 2:
+        return False
+    lo = np.nanmin(P["l"][i - w:i + 1])
+    hi = np.nanmax(P["h"][i - w:i + 1])
+    if not (np.isfinite(lo) and np.isfinite(hi) and hi > lo):
+        return False
+    pos_ = (P["c"][i] - lo) / (hi - lo)          # 0=구간 최저, 1=구간 최고
+    if pos_ > cfg["squeeze_pct"]:                 # 바닥권인가
+        return False
+    if not (P["c"][i] > P["c"][i - 1] > P["c"][i - 2]):   # 이틀 연속 올랐는가
+        return False
+    ma = P["qv_ma"][i]
+    return bool(np.isfinite(ma) and ma >= cfg["min_qv"])
+
+
 def sig_any(P, i, cfg):
     """진입 신호 없음 — 유동성만 본다. 청산 규칙만의 성적."""
     ma = P["qv_ma"][i]
@@ -140,6 +159,8 @@ def signal(P, i, cfg):
         return sig_surfer(P, i, cfg)
     if e == "any":
         return sig_any(P, i, cfg)
+    if e == "dip":
+        return sig_dip(P, i, cfg)
     if not np.isfinite(P["rank"][i]) or P["rank"][i] > cfg["squeeze_pct"]:
         return False
     if not np.isfinite(P["ph"][i]) or P["c"][i] <= P["ph"][i]:
@@ -188,6 +209,11 @@ def simulate(pre, dates, cfg, seed=1000.0, random_entry=False, rng=None):
             if lo <= p.stop:
                 exit_px = min(p.stop, op)
                 reason = "TRAIL" if p.trailing else "STOP"
+            elif cfg.get("fixed_tp"):
+                if hi >= p.entry * (1 + cfg["fixed_tp"]):
+                    exit_px, reason = p.entry * (1 + cfg["fixed_tp"]), "TP"
+                elif i - p.i0 >= cfg["max_hold"]:
+                    exit_px, reason = cl, "TIME"
             else:
                 p.peak = max(p.peak, hi)
                 if not p.trailing and p.peak >= p.entry * (1 + cfg["trail_start"]):
@@ -280,8 +306,10 @@ def main():
     ap.add_argument("--grid", action="store_true")
     ap.add_argument("--baseline", action="store_true")
     ap.add_argument("--n-control", type=int, default=20)
-    ap.add_argument("--entry", default="coil", choices=["coil", "surfer", "any"])
+    ap.add_argument("--entry", default="coil", choices=["coil", "surfer", "any", "dip"])
     ap.add_argument("--gate", action="store_true", help="SURFER v2.1 시장 필터를 켠다")
+    ap.add_argument("--fixed-tp", type=float, default=None,
+                    help="트레일링 대신 고정 익절 (예: 0.15). 목표 찍고 나온다")
     ap.add_argument("--cap", type=float, default=3.0, help="거래당 수익 상한 (데이터 이상치 차단)")
     for k, v in DEFAULT.items():
         ap.add_argument(f"--{k.replace('_','-')}", type=type(v), default=None)
@@ -294,6 +322,7 @@ def main():
             cfg[k] = v
     cfg["entry"] = args.entry
     cfg["gate"] = args.gate
+    cfg["fixed_tp"] = args.fixed_tp
     globals()["RET_CAP"] = args.cap
 
     daily = load_daily()

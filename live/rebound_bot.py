@@ -73,9 +73,13 @@ class Bot:
         self.dry = (mode == "paper")
         self.top, self.seed, self.max_conc = top, seed, max_conc
         self.fixed_usdt = usdt
-        self.ex = config.make_exchange("futures", testnet=(mode == "testnet"),
+        # 실서버 선물 스트림(fstream.binance.com)은 회선에 따라 연결만 되고 데이터가 안 온다.
+        # 데모 스트림(fstream.binancefuture.com)은 같은 시세를 정상으로 보낸다.
+        # 그래서 paper 도 데모 주소를 쓴다 — 주문은 어차피 안 나간다.
+        self.ex = config.make_exchange("futures", testnet=(mode != "live"),
                                        use_pro=True, need_keys=not self.dry)
         self.books = {}
+        self.lags, self.nbar, self.beat = [], 0, 30
         self.d = {"positions": {}, "pending": {}, "history": [], "cash": seed}
         if os.path.exists(STATE):
             try:
@@ -323,6 +327,17 @@ class Bot:
                             continue
                         if not book.push(bar):
                             continue
+                        # 지연 측정 — 이 전략의 생사가 걸린 숫자다.
+                        # 봉 마감(=봉시각+60초) 부터 지금까지 몇 초인가.
+                        lag = (self.ex.milliseconds() - (int(bar[0]) + 60_000)) / 1000
+                        self.lags.append(lag)
+                        self.nbar += 1
+                        if self.nbar % self.beat == 0:
+                            L = sorted(self.lags)[-500:]
+                            logging.info(f"[박동] 봉 {self.nbar}건 처리 | 지연 중앙값 "
+                                         f"{L[len(L)//2]:.1f}초 / 최대 {max(L):.1f}초 | "
+                                         f"보유 {len(self.d['positions'])} 대기 {len(self.d['pending'])}")
+                            self.lags = self.lags[-500:]
                         await self.check_pending(sym, book)
                         await self.check_position(sym, book)
                         if book.ready():

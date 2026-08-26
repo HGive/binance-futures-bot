@@ -103,6 +103,18 @@ def _use_testnet(ex, market):
             if k.startswith("fapi") or k.startswith("dapi"):
                 if k in test:
                     api[k] = test[k]
+    # 웹소켓 주소도 갈아끼운다. ccxt 의 sandbox 제거 이후 자동으로 안 된다.
+    # 주소는 urls["api"]["ws"] 안에 있다 (urls["ws"] 가 아니다 — 여기서 한 번 틀렸다).
+    # REBOUND 는 1분봉 스트림이 생명줄이라 빼먹으면 조용히 아무것도 안 받는다.
+    tws = test.get("ws")
+    if isinstance(tws, dict):
+        ws = dict(api.get("ws") or {})
+        ws.update({k: v for k, v in tws.items() if k != "ws-api"})
+        if isinstance(tws.get("ws-api"), dict):
+            wa = dict(ws.get("ws-api") or {})
+            wa.update(tws["ws-api"])
+            ws["ws-api"] = wa
+        api["ws"] = ws
     ex.urls["api"] = api
     ex.options["defaultType"] = "future" if market != "spot" else "spot"
 
