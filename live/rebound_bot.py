@@ -218,14 +218,19 @@ class Bot:
     #  그래서 조건부 주문은 algoId 를 받고, fetch_order / fetch_open_orders 로는
     #  절대 안 보인다. 전용 API 로만 조회·취소된다. 이걸 모르면 손절이 걸렸는지
     #  영영 확인 못 하고 시간초과로만 나가게 된다.
-    async def algo_status(self, algo_id):
-        """NEW / FILLED / CANCELLED / EXPIRED ... 못 찾으면 None."""
+    async def algo_state(self, algo_id):
+        """(상태, 체결수량) 을 준다. 못 찾으면 (None, 0).
+
+        주의: 손절이 터져도 상태는 FILLED 가 아니라 **FINISHED** 다.
+        취소했을 때도 FINISHED 로 온다. 둘을 가르는 건 actualQty 뿐이다.
+        이걸 몰라서 손절 체결을 못 알아채고 유령 포지션이 3개 쌓였다.
+        """
         try:
             r = await self.ex.fapiPrivateGetAlgoOrder({"algoId": str(algo_id)})
-            return r.get("algoStatus")
+            return r.get("algoStatus"), float(r.get("actualQty") or 0)
         except Exception as e:
             logging.warning(f"  알고 주문 {algo_id} 조회 실패: {e}")
-            return None
+            return None, 0.0
 
     async def algo_cancel(self, algo_id):
         try:
@@ -289,12 +294,12 @@ class Bot:
                     pass
             aid = p["ids"].get("sl")
             if aid:
-                st = await self.algo_status(aid)
-                if st in ("FILLED", "TRIGGERED", "PARTIALLY_FILLED"):
+                st, qty = await self.algo_state(aid)
+                if qty > 0:                       # 실제로 체결됐다
                     await self.cancel_rest(sym, p, skip="sl")
                     return await self.settle(sym, p["sl"], "SL")
-                if st in ("CANCELLED", "EXPIRED", "REJECTED"):
-                    # 손절이 사라졌는데 포지션은 남았다 = 규칙 3.5 위반 상태.
+                if st not in ("NEW", "WORKING", None):
+                    # 안 걸렸는데 사라졌다 = 규칙 3.5 위반 상태. 들고 있으면 안 된다.
                     logging.error(f"{sym} 손절이 거래소에서 사라졌다({st}) — 즉시 정리한다")
                     await self.cancel_rest(sym, p, skip="sl")
                     return await self.close(sym, cl, p["qty"], "STOP_GONE")
@@ -323,6 +328,12 @@ class Bot:
                 await self.ex.create_order(sym, "market", "sell", qty,
                                            None, {"reduceOnly": True})
             except Exception as e:
+                # -2022 = 줄일 포지션이 없다. 이미 거래소에서 닫힌 것이다.
+                # 여기서 그냥 return 하면 장부에 유령이 남아 1분마다 영원히 재시도한다.
+                if "-2022" in str(e) or "ReduceOnly" in str(e):
+                    logging.warning(f"{sym} 거래소에 포지션이 없다 — 이미 닫힌 것으로 정리한다")
+                    await self.cancel_rest(sym, self.d["positions"].get(sym) or {})
+                    return await self.settle(sym, price, reason + "_GONE")
                 logging.error(f"{sym} 정리 실패: {e}")
                 return
         await self.settle(sym, price, reason)
@@ -400,7 +411,7 @@ class Bot:
                              + ", ".join(f"{x['type']}@{x.get('price')}" for x in oo))
             except Exception as e:
                 logging.warning(f"  미체결 조회 실패: {e}")
-            st = await self.algo_status(p["ids"].get("sl"))
+            st, _q = await self.algo_state(p["ids"].get("sl"))
             logging.info(f"  손절(알고 주문) 상태: {st}"
                          + ("  ← 거래소에 살아있다" if st == "NEW" else "  ← 문제!"))
 
@@ -462,6 +473,34 @@ class Bot:
                 logging.error(f"  정리 실패: {e}")
         logging.info(f"청소 완료 — 처리 {killed}건 / 내 장부 {len(mine)}종")
 
+    async def resync(self):
+        """장부에 있는데 거래소엔 없는 포지션을 지운다.
+
+        손절이 터졌는데 봇이 못 알아채면 칸이 묶인다. 3칸짜리라 3개면 전부 멈춘다.
+        실제로 그렇게 이틀을 놀았다. MAX_HOLD(60분)를 기다리지 말고 주기적으로 맞춘다.
+        """
+        if self.dry or not self.d["positions"]:
+            return
+        try:
+            live = {p["symbol"]: abs(float(p.get("contracts") or 0))
+                    for p in await self.ex.fetch_positions(list(self.d["positions"]))}
+        except Exception as e:
+            logging.warning(f"포지션 대조 실패: {e}")
+            return
+        for sym in list(self.d["positions"]):
+            if live.get(sym, 0) > 0:
+                continue
+            p = self.d["positions"][sym]
+            aid = p.get("ids", {}).get("sl")
+            px, why = p["entry"], "GONE"
+            if aid:
+                st, q = await self.algo_state(aid)
+                if q > 0:
+                    px, why = p["sl"], "SL"
+            logging.warning(f"[대조] {sym} 거래소엔 없다 — {why} 로 정리한다")
+            await self.cancel_rest(sym, p, skip="sl" if why == "SL" else None)
+            await self.settle(sym, px, why)
+
     # ── 메인 루프 ───────────────────────────────────────
     async def run(self):
         syms = await self.universe()
@@ -488,6 +527,8 @@ class Bot:
                         lag = (self.ex.milliseconds() - (int(bar[0]) + 60_000)) / 1000
                         self.lags.append(lag)
                         self.nbar += 1
+                        if self.nbar % 600 == 0:
+                            await self.resync()
                         if self.nbar % self.beat == 0:
                             L = sorted(self.lags)[-500:]
                             logging.info(f"[박동] 봉 {self.nbar}건 처리 | 지연 중앙값 "
