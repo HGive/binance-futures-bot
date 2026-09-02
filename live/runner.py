@@ -28,7 +28,8 @@ def main():
     ap.add_argument("--mode", choices=["paper", "testnet", "live"], default="paper")
     ap.add_argument("--strategies", default="hibernate,surfer")
     ap.add_argument("--seed", type=float, default=1000.0, help="paper 모드 시드")
-    ap.add_argument("--top", type=int, default=400)
+    ap.add_argument("--top", type=int, default=500,
+                    help="백테스트는 542종을 봤다. 400 으로 자르면 298종만 본다")
     ap.add_argument("--fast", type=int, default=300, help="보유 점검 주기(초)")
     ap.add_argument("--once", action="store_true")
     ap.add_argument("--i-know", action="store_true", help="live 모드 확인")

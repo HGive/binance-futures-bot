@@ -33,7 +33,7 @@ import config  # noqa: E402  (로깅 설정 부작용)
 import strategies.rebound as S  # noqa: E402
 from live import ai_gate  # noqa: E402
 
-STATE = "logs/rebound_state.json"
+STATE = "logs/rebound_state.json"   # --tag 로 갈아끼운다
 NEED = S.VOL_MA_BARS + S.DROP_BARS + 5      # 지표에 필요한 최소 봉 수
 MIN_NOTIONAL = 5.0
 
@@ -68,8 +68,9 @@ class Book:
 
 
 class Bot:
-    def __init__(self, mode, top, seed, max_conc, usdt):
+    def __init__(self, mode, top, seed, max_conc, usdt, tag=""):
         self.mode = mode
+        self.tag = tag
         self.dry = (mode == "paper")
         self.top, self.seed, self.max_conc = top, seed, max_conc
         self.fixed_usdt = usdt
@@ -80,6 +81,7 @@ class Bot:
                                        use_pro=True, need_keys=not self.dry)
         self.books = {}
         self.lags, self.nbar, self.beat = [], 0, 500
+        self.skip = set()
         self.d = {"positions": {}, "pending": {}, "history": [], "cash": seed}
         if os.path.exists(STATE):
             try:
@@ -143,7 +145,7 @@ class Bot:
 
     # ── 진입 ────────────────────────────────────────────
     async def try_enter(self, sym, price):
-        if sym in self.d["positions"] or sym in self.d["pending"]:
+        if sym in self.d["positions"] or sym in self.d["pending"] or sym in self.skip:
             return
         if len(self.d["positions"]) + len(self.d["pending"]) >= self.max_conc:
             return
@@ -168,12 +170,39 @@ class Bot:
                 logging.warning(f"{sym} 레버리지 설정 실패(무시): {e}")
             qty = float(self.ex.amount_to_precision(sym, qty))
             limit = float(self.ex.price_to_precision(sym, limit))
-            try:
-                o = await self.ex.create_order(sym, "limit", "buy", qty, limit,
-                                               {"postOnly": True})
-                oid = o["id"]
-            except Exception as e:
-                logging.error(f"{sym} 매수 주문 실패: {e}")
+            oid = None
+            for attempt in (1, 2):
+                try:
+                    o = await self.ex.create_order(sym, "limit", "buy", qty, limit,
+                                                   {"postOnly": True})
+                    oid = o["id"]
+                    break
+                except Exception as e:
+                    msg = str(e)
+                    # -5022: 지금 걸면 즉시 체결돼서 메이커가 안 된다 = 그새 더 빠졌다.
+                    # 신호의 31% 가 여기서 잘려나갔다. 최우선 매수호가로 한 번 다시 건다.
+                    # 시장가로 바꾸지는 않는다 — 백테스트에서 테이커 진입은 마이너스였다.
+                    if "-5022" in msg and attempt == 1:
+                        try:
+                            ob = await self.ex.fetch_order_book(sym, 5)
+                            bid = float(ob["bids"][0][0])
+                        except Exception:
+                            logging.warning(f"{sym} 호가 조회 실패 — 이번 신호는 넘긴다")
+                            return
+                        if bid >= limit:            # 더 비싸게 살 이유는 없다
+                            logging.info(f"{sym} 매수호가가 지정가보다 높다 — 넘긴다")
+                            return
+                        limit = float(self.ex.price_to_precision(sym, bid))
+                        qty = float(self.ex.amount_to_precision(sym, notional / limit))
+                        logging.info(f"{sym} postOnly 거부 — 매수호가 {limit} 로 다시 건다")
+                        continue
+                    if "-4411" in msg:              # 주식형 선물, 약관 미동의
+                        self.skip.add(sym)
+                        logging.warning(f"{sym} 거래 불가 종목 — 유니버스에서 뺀다")
+                        return
+                    logging.error(f"{sym} 매수 주문 실패: {e}")
+                    return
+            if oid is None:
                 return
         self.d["pending"][sym] = dict(id=oid, price=limit, qty=qty,
                                       placed=int(time.time()), bars=0)
@@ -437,6 +466,11 @@ class Bot:
         """
         if self.dry:
             return
+        if self.tag:
+            # 한 계좌에서 두 봇이 실주문하면 서로의 손절을 고아로 보고 지워버린다.
+            # 나란히 돌릴 때는 청소를 끈다 (그래서 --tag 는 paper 를 권한다).
+            logging.warning("나란히 돌리는 중 — 고아 주문 청소를 건너뛴다")
+            return
         mine = set(self.d["positions"])
         try:
             r = await self.ex.fapiPrivateGetOpenAlgoOrders({})
@@ -553,19 +587,26 @@ class Bot:
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--mode", choices=["paper", "testnet", "live"], default="paper")
-    ap.add_argument("--top", type=int, default=40)
+    ap.add_argument("--top", type=int, default=120)
     ap.add_argument("--seed", type=float, default=1000.0)
     ap.add_argument("--max-conc", type=int, default=3)
     ap.add_argument("--usdt", type=float, default=None, help="1건당 증거금 고정 (시드가 적을 때)")
     ap.add_argument("--i-know", action="store_true")
+    ap.add_argument("--tag", default="", help="개선판을 나란히 돌릴 때. 상태/로그 파일이 갈린다")
     ap.add_argument("--probe", default=None, metavar="심볼",
                     help="신호 무시하고 주문 경로만 한 번 태운다 (예: BTC/USDT:USDT)")
     ap.add_argument("--probe-usdt", type=float, default=5.0)
     a = ap.parse_args()
     if a.mode == "live" and not a.i_know:
         print("REBOUND 는 아직 v0.x 다. 실전은 --i-know 를 붙여라."); sys.exit(1)
-    os.environ.setdefault("LOG_FILENAME", f"rebound_{a.mode}.log")
-    bot = Bot(a.mode, a.top, a.seed, a.max_conc, a.usdt)
+    if a.tag:
+        globals()["STATE"] = f"logs/rebound_{a.tag}_state.json"
+    os.environ.setdefault("LOG_FILENAME", f"rebound_{a.tag or a.mode}.log")
+    if a.tag and a.mode != "paper":
+        print("경고: --tag 는 paper 모드를 권한다. 한 계좌에서 두 봇이 실주문하면\n"
+              "      같은 종목 포지션이 합쳐지고 서로의 손절을 지운다.\n"
+              "      그래도 하려면 유니버스를 겹치지 않게 나눠라.")
+    bot = Bot(a.mode, a.top, a.seed, a.max_conc, a.usdt, a.tag)
     if a.probe:
         if a.mode == "live":
             print("--probe 는 실전에서 못 쓴다."); sys.exit(1)
