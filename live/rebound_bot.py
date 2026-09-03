@@ -541,7 +541,11 @@ class Bot:
         await self.reconcile()
         await self.prime(syms)
         logging.info(f"REBOUND v{S.VERSION} 시작 — 모드 {self.mode} / "
-                     f"레버리지 {S.LEVERAGE}배 / 동시 {self.max_conc}칸")
+                     f"레버리지 {S.LEVERAGE}배 / 동시 {self.max_conc}칸"
+                     + (f" / 실험 [{self.tag}]" if self.tag else ""))
+        logging.info(f"  진입: {S.DROP_BARS}분 {S.DROP_PCT:+.1%} + 거래량 x{S.VOL_MULT} | "
+                     f"청산: 익절 +{S.TAKE_PROFIT:.1%} 손절 -{S.STOP_LOSS:.1%} "
+                     f"최대 {S.MAX_HOLD_BARS}분")
         while True:
             try:
                 bars = await self.ex.watch_ohlcv_for_symbols(
@@ -593,12 +597,25 @@ def main():
     ap.add_argument("--usdt", type=float, default=None, help="1건당 증거금 고정 (시드가 적을 때)")
     ap.add_argument("--i-know", action="store_true")
     ap.add_argument("--tag", default="", help="개선판을 나란히 돌릴 때. 상태/로그 파일이 갈린다")
+    # 상수는 strategies/rebound.py 가 유일한 출처다(규칙 3.1).
+    # 아래는 **나란히 비교하는 실험용**으로만 쓴다. 바꾸면 로그에 크게 남긴다.
+    ap.add_argument("--tp", type=float, default=None, help="실험: 익절 (예 0.015)")
+    ap.add_argument("--sl", type=float, default=None, help="실험: 손절 (예 0.005)")
+    ap.add_argument("--vol-mult", type=float, default=None, help="실험: 거래량 배수 (예 5.0)")
+    ap.add_argument("--drop-pct", type=float, default=None, help="실험: 급락 기준 (예 -0.02)")
     ap.add_argument("--probe", default=None, metavar="심볼",
                     help="신호 무시하고 주문 경로만 한 번 태운다 (예: BTC/USDT:USDT)")
     ap.add_argument("--probe-usdt", type=float, default=5.0)
     a = ap.parse_args()
     if a.mode == "live" and not a.i_know:
         print("REBOUND 는 아직 v0.x 다. 실전은 --i-know 를 붙여라."); sys.exit(1)
+    over = {k: v for k, v in (("TAKE_PROFIT", a.tp), ("STOP_LOSS", a.sl),
+                              ("VOL_MULT", a.vol_mult), ("DROP_PCT", a.drop_pct))
+            if v is not None}
+    if over and not a.tag:
+        print("상수를 바꾸려면 --tag 를 붙여라. 기본 봇의 성적이 오염된다."); sys.exit(1)
+    for k, v in over.items():
+        setattr(S, k, v)
     if a.tag:
         globals()["STATE"] = f"logs/rebound_{a.tag}_state.json"
     os.environ.setdefault("LOG_FILENAME", f"rebound_{a.tag or a.mode}.log")

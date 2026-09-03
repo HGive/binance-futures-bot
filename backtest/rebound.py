@@ -44,7 +44,8 @@ def load_1m(min_bars=20000, market="futures"):
 
 
 def simulate(data, drop_bars, drop_pct, vol_mult, tp, sl, hold,
-             wait=3, offset=0.0, latency=0, min_qv=None, random_at=None, rng=None):
+             wait=3, offset=0.0, latency=0, min_qv=None, random_at=None, rng=None,
+             post_only=True):
     """latency: 신호봉 종가 이후 이 봉 수만큼 지나서야 주문이 걸린다."""
     min_qv = S.MIN_QV_MA if min_qv is None else min_qv
     rows = []
@@ -63,6 +64,14 @@ def simulate(data, drop_bars, drop_pct, vol_mult, tp, sl, hold,
 
             limit = I["c"][i] * (1 - offset)
             start = i + 1 + latency
+            # 실전에서는 postOnly 로 건다. 주문을 낼 때 이미 값이 지정가 아래면
+            # 거래소가 거부한다(-5022). 데모에서 신호의 31%가 여기서 잘려나갔다.
+            # 그게 곧 **가장 빠르게 무너지는 급락**이라, 이걸 빼먹으면
+            # 손절을 맞았어야 할 거래가 표본에 들어온다.
+            if post_only and I["o"][start] <= limit:
+                rows.append(dict(sym=sym, ts=I["ts"][i], filled=0, ret=0.0, why="POSTONLY"))
+                i += wait + 1
+                continue
             fill_j = None
             for j in range(start, min(n - 1, start + wait)):
                 if I["l"][j] <= limit:
@@ -75,7 +84,18 @@ def simulate(data, drop_bars, drop_pct, vol_mult, tp, sl, hold,
             tpx, spx = px * (1 + tp), px * (1 - sl)
             last = min(n - 1, fill_j + hold)
             r, why = None, ""
-            for j in range(fill_j + 1, last + 1):        # 체결 봉 제외
+            # 체결된 그 봉에서 손절선을 이미 뚫었으면 그 자리에서 끝난 것이다.
+            # 급락 중에 지정가로 받는 전략이라 이 일이 실제로 자주 난다
+            # (데모에서 -2021 "Order would immediately trigger" 가 13건 났다).
+            # 이걸 빼먹으면 손절을 맞았어야 할 거래가 살아남아 회복할 시간을 얻고,
+            # 익절을 멀리 둘수록 그 이득이 커져서 격자가 끝까지 단조로워진다.
+            if I["l"][fill_j] <= spx:
+                rows.append(dict(sym=sym, ts=I["ts"][fill_j], filled=1,
+                                 ret=(spx / px - 1) - S.FEE_MAKER - S.FEE_TAKER - S.SLIPPAGE,
+                                 why="SL"))
+                i = fill_j + 1
+                continue
+            for j in range(fill_j + 1, last + 1):        # 익절은 체결 봉에서 안 본다
                 if I["l"][j] <= spx:                     # 손절 우선
                     r, why = (spx / px - 1) - S.FEE_MAKER - S.FEE_TAKER - S.SLIPPAGE, "SL"; break
                 if I["h"][j] >= tpx:
@@ -119,7 +139,7 @@ def header():
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--mode", default="base",
-                    choices=["base", "grid", "latency", "period", "control", "oos"])
+                    choices=["base", "grid", "latency", "period", "control", "oos", "tune"])
     ap.add_argument("--min-bars", type=int, default=20000)
     args = ap.parse_args()
 
@@ -174,6 +194,40 @@ def main():
         print("\n종목별 상위/하위 5")
         by = f.groupby("sym")["ret"].agg(["count", "sum", "mean"]).sort_values("sum")
         print(by.tail(5).to_string()); print(by.head(5).to_string())
+
+    elif args.mode == "tune":
+        # PF 가 아니라 **연 환산 수익**으로 줄 세운다.
+        # PF 2.34 짜리가 거래가 8배 드물면 총수익은 1/4 이다. 이걸로 한 번 속았다.
+        SYMS, YEARS, LEV, LIVE_SYMS = len(data), 1.8, S.LEVERAGE, 120
+        print(f"{'설정':<38}{'거래':>6}{'평균':>9}{'PF':>6}{'익절%':>7}{'결판%':>7}{'연환산':>13}")
+        print("-" * 88)
+        rows = []
+        cand = []
+        # 체결봉 손절을 반영하고 나서 처음부터 다시 찾는다.
+        # 손절 -0.5%는 지정가로 받은 그 1분 안에 뚫리는 일이 많다. 넓히는 쪽부터 본다.
+        import itertools as _it
+        for sl, tp in _it.product([0.005, 0.010, 0.015, 0.020, 0.030],
+                                  [0.010, 0.020, 0.030]):
+            cand.append(dict(sl=sl, tp=tp))
+        seen = set()
+        for c in [{}] + cand:
+            key = tuple(sorted(c.items()))
+            if key in seen:
+                continue
+            seen.add(key)
+            st = stats(simulate(data, **{**D, **c}))
+            if not st:
+                print(f"{str(c) or '현행':<32} 관측 부족"); continue
+            per_sym_year = st["n"] / YEARS / SYMS
+            yr = per_sym_year * LIVE_SYMS * st["mean"] * LEV
+            nm = "현행" if not c else ", ".join(f"{k}={v}" for k, v in c.items())
+            print(f"{nm:<38}{st['n']:>6}{st['mean']*100:>+8.3f}%{st['pf']:>6.2f}"
+                  f"{st['tp_share']*100:>6.0f}%{st['resolved']*100:>7.0f}%{yr*100:>13.0f}%", flush=True)
+            rows.append((yr, nm, st))
+        rows.sort(reverse=True)
+        print("\n=== 연환산 상위 5 ===")
+        for yr, nm, st in rows[:5]:
+            print(f"  {nm:<32} 연 {yr*100:>6.0f}%  (거래 {st['n']}, PF {st['pf']:.2f})")
 
     elif args.mode == "oos":
         # 파라미터는 2026-04~08 자료로 골랐다. 그 앞 구간은 손대지 않은 자료다.
