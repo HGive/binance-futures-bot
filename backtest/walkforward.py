@@ -145,7 +145,22 @@ def simulate(symbols, daily, pre, dates, a, b, masks, regime, cash=1000.0,
                                    "margin": p.margin, "pnl": pnl, "roi": pnl/p.margin})
                     del positions[sym]
                 continue
-            if i <= p.open_i:
+            if i < p.open_i:
+                continue
+            if i == p.open_i:
+                # 진입한 그날. 익절은 봉 안 경로를 모르니 안 본다(규칙 3.3).
+                # 다만 손절은 거래소에 걸어둔 주문이라 그날 바로 맞을 수 있다.
+                # 1분봉 전략에서 이걸 빼먹었다가 성적이 통째로 뒤집힌 적이 있다.
+                if STYLE["adaptive_tp"] and p.sl_px is not None:
+                    r0 = daily[sym].iloc[i]
+                    if r0["low"] <= p.sl_px:
+                        fill = min(p.sl_px, r0["open"]) * (1 - S.SLIPPAGE)
+                        pnl = max(p.qty*(fill-p.avg) - p.qty*fill*S.FEE_RATE, -p.margin)
+                        cash += p.margin + pnl
+                        trades.append({"symbol": sym, "exit_ts": today, "reason": "STOP_D0",
+                                       "hold_days": 0, "margin": p.margin,
+                                       "pnl": pnl, "roi": pnl/p.margin})
+                        del positions[sym]
                 continue
             row = daily[sym].iloc[i]
             hi, lo, op = row["high"], row["low"], row["open"]

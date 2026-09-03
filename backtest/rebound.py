@@ -85,6 +85,7 @@ def simulate(data, drop_bars, drop_pct, vol_mult, tp, sl, hold,
             last = min(n - 1, fill_j + hold)
             r, why = None, ""
             # 체결된 그 봉에서 손절선을 이미 뚫었으면 그 자리에서 끝난 것이다.
+            # (회귀 테스트: tests/test_entry_bar_stop.py)
             # 급락 중에 지정가로 받는 전략이라 이 일이 실제로 자주 난다
             # (데모에서 -2021 "Order would immediately trigger" 가 13건 났다).
             # 이걸 빼먹으면 손절을 맞았어야 할 거래가 살아남아 회복할 시간을 얻고,
