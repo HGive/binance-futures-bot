@@ -124,8 +124,10 @@ class Pos:
 
 
 def simulate(symbols, daily, pre, dates, a, b, masks, regime, cash=1000.0,
-             positions=None, idx=None, last_day=None, drought_arr=None):
+             positions=None, idx=None, last_day=None, drought_arr=None,
+             rank_arr=None):
     """a~b 구간 시뮬레이션. positions 를 넘기면 이어서 돌린다."""
+    rank_arr = drought_arr if rank_arr is None else rank_arr
     positions = positions if positions is not None else {}
     trades, curve = [], []
     for di in range(a, b):
@@ -229,7 +231,10 @@ def simulate(symbols, daily, pre, dates, a, b, masks, regime, cash=1000.0,
                 if int((last_day[sym]-today)/np.timedelta64(1,"D")) < 5:
                     continue
                 if masks[sym][i]:
-                    cands.append((drought_arr[sym][i], sym, i))
+                    # 정렬 키. 기본은 가뭄일수(오래 조용한 것 먼저).
+                    # illiq 는 Amihud 비유동성(거래가 잘 안 되는 것 먼저) —
+                    # 논문 3편과 자체 3x3 측정이 공통으로 지목한 변수다.
+                    cands.append((rank_arr[sym][i], sym, i))
             cands.sort(reverse=True)
             for _, sym, i in cands:
                 if len(positions) >= S.MAX_CONCURRENT or cash < budget:
@@ -276,6 +281,8 @@ if __name__ == "__main__":
     ap.add_argument("--style", default="adaptive", choices=list(EXIT_STYLES))
     ap.add_argument("--tp-frac", type=float, default=None, help="과거 슈팅 크기의 몇 배를 목표로")
     ap.add_argument("--stop", type=float, default=None, help="손절 (예: -0.20)")
+    ap.add_argument("--rank", default="drought", choices=["drought", "illiq", "liquid"],
+                    help="후보가 자리보다 많을 때 무엇을 먼저 담을지")
     ap.add_argument("--ratio-min", type=float, default=None)
     ap.add_argument("--ratio-max", type=float, default=None)
     ap.add_argument("--droughts", default="90,120")
@@ -326,6 +333,21 @@ if __name__ == "__main__":
     idx = {s: {t: i for i, t in enumerate(daily[s]["dt"].values)} for s in symbols}
     last_day = {s: daily[s]["dt"].values[-1] for s in symbols}
     drought_arr = {s: pre[s]["drought"] for s in symbols}
+
+    def amihud(d, win=14):
+        """Amihud 비유동성 = mean(|일수익률| / 일거래대금). 클수록 안 팔리는 종목.
+        거래대금이 0 이거나 없는 날은 제외한다."""
+        r = d["close"].pct_change().abs()
+        q = d["qv"].replace(0, np.nan)
+        return (r / q).rolling(win, min_periods=5).mean().values
+
+    if args.rank == "drought":
+        rank_arr = drought_arr
+    else:
+        ill = {s: amihud(daily[s]) for s in symbols}
+        sign = 1.0 if args.rank == "illiq" else -1.0     # liquid 은 반대 방향(대조군)
+        rank_arr = {s: np.nan_to_num(sign * ill[s], nan=-9e18) for s in symbols}
+        print(f"[정렬] {args.rank} — Amihud 비유동성 {'높은' if sign > 0 else '낮은'} 종목 우선")
     regs = regime_maps(symbols, daily, dates)
     print(f"[자리 {S.MIN_TGT_RATIO}~{S.MAX_TGT_RATIO} / 역사적저점 {S.ATL_TOL} / 1차매도 {S.SPLIT_AT_FIRST:.0%}] 심볼 {len(symbols)}종 | 전체 {pd.Timestamp(dates[0]).date()} ~ {pd.Timestamp(dates[-1]).date()}")
 
@@ -360,7 +382,7 @@ if __name__ == "__main__":
             m = get_masks(dr, pos, sp)
             t, e, _, _ = simulate(symbols, daily, pre, dates, tr_a, tr_b, m, regs[rg],
                                   cash=1000.0, positions={}, idx=idx,
-                                  last_day=last_day, drought_arr=drought_arr)
+                                  last_day=last_day, drought_arr=drought_arr, rank_arr=rank_arr)
             sc, _ = score(t, e, 1000.0)
             if sc > best:
                 best, best_p = sc, (dr, pos, sp, rg)
@@ -368,7 +390,7 @@ if __name__ == "__main__":
         m = get_masks(dr, pos, sp)
         t, e, positions, cash = simulate(symbols, daily, pre, dates, te_a, te_b, m, regs[rg],
                                          cash=cash, positions=positions, idx=idx,
-                                         last_day=last_day, drought_arr=drought_arr)
+                                         last_day=last_day, drought_arr=drought_arr, rank_arr=rank_arr)
         w += 1
         seg_ret = (e["equity"].iloc[-1]/e["equity"].iloc[0]-1)*100 if len(e) else 0
         log.append({"win": w, "test_from": pd.Timestamp(dates[te_a]).date(),

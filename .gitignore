@@ -9,4 +9,8 @@ data/flow/
 logs/*.json
 logs/*.jsonl
 logs/*.log
-poetry.lockdata/
+# 큰 봉 데이터는 추적하지 않는다 (2.4GB, 몇 시간이면 다시 받는다).
+# 일봉·4시간봉은 작고 상폐 종목이 섞여 있어 계속 추적한다.
+data/ohlcv/*_1m.csv
+data/ohlcv/*_5m.csv
+data/ohlcv/*_15m.csv
