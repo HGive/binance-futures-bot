@@ -131,7 +131,11 @@ class FakeEx:
         return {"id": sym.split("/")[0] + "USDT", "limits": {"cost": {"min": 5.0}}}
 
     def amount_to_precision(self, sym, x):
-        return f"{np.floor(x * 1000) / 1000:.3f}"
+        import ccxt
+        r = np.floor(x * 1000) / 1000
+        if r == 0:                                   # ccxt 실제 동작: 단위 미만이면 예외
+            raise ccxt.InvalidOrder("amount must be greater than minimum amount precision")
+        return f"{r:.3f}"
 
     def price_to_precision(self, sym, x):
         return f"{x:.2f}"
@@ -238,3 +242,13 @@ def test_refuses_shared_account():
             {"symbol": "ETH/USDT:USDT", "contracts": 0}]
     assert foreign_positions(rows) == ["HEMI/USDT:USDT"]
     assert foreign_positions(rows[:1]) == []
+
+
+def test_amount_below_step_is_skipped_not_raised(tmp_path, monkeypatch):
+    """0.001 BTC 미만 조정은 건너뛴다. 예외가 나면 하루 실행이 죽고 10분에 5번이면 봇이 멈춘다."""
+    sym = S.SYMBOLS[0]
+    ex = FakeEx(positions={sym: 0.010})
+    b = live_bot(ex, tmp_path, monkeypatch)
+    asyncio.run(b.rebalance(sym, {"cur_qty": 0.010, "target_qty": 0.0104}, 78_000.0))
+    assert [c for c in ex.calls if c[0] == "create"] == []
+    assert b.skipped and b.skipped[0]["amount"] == 0.0

@@ -23,6 +23,7 @@ import os
 import sys
 from datetime import datetime, timedelta, timezone
 
+import ccxt
 import numpy as np
 import pandas as pd
 
@@ -90,6 +91,14 @@ def plan(close: pd.DataFrame, equity: float, positions: dict, prices: dict, gate
         out[sym] = dict(signal_w=raw_w, target_w=tw, cur_w=cur_w, target_qty=tw * equity / px, cur_qty=cur_qty,
                         trade=trade, stop=stop, close=float(last[cid]), vol_d=float(vol_d[cid]))
     return out, str(close.index[-1].date())
+
+
+def precise_amount(ex, sym, qty):
+    """거래소 수량 단위로 내림. 단위보다 작으면 0 (ccxt 는 여기서 InvalidOrder 를 던진다 → 봇이 멈춘다)."""
+    try:
+        return float(ex.amount_to_precision(sym, abs(qty)))
+    except ccxt.InvalidOrder:
+        return 0.0
 
 
 def foreign_positions(positions):
@@ -211,7 +220,7 @@ class TrendBot:
     async def market(self, sym, qty_signed, reduce_only, px):
         side = "buy" if qty_signed > 0 else "sell"
         m = (self.pub if self.dry else self.ex).market(sym)
-        amt = float((self.pub if self.dry else self.ex).amount_to_precision(sym, abs(qty_signed)))
+        amt = precise_amount(self.pub if self.dry else self.ex, sym, qty_signed)
         min_cost = (m.get("limits", {}).get("cost", {}) or {}).get("min") or 5.0
         if amt <= 0 or (amt * px < min_cost and not reduce_only):
             logging.info(f"[{sym}] {side} {amt} ≈ {amt*px:.1f} USDT < 최소 {min_cost} → 건너뜀")
@@ -296,7 +305,7 @@ class TrendBot:
             logging.info(f"[{sym}] (paper) 재난 손절 {stop:.2f}")
             return True
         sp = float(self.ex.price_to_precision(sym, stop))
-        amt = float(self.ex.amount_to_precision(sym, abs(qty)))
+        amt = precise_amount(self.ex, sym, qty)
         try:
             o = await self.ex.create_order(sym, "STOP_MARKET", "sell" if side > 0 else "buy", amt, None,
                                            {"stopPrice": sp, "reduceOnly": True})
