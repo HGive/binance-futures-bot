@@ -92,6 +92,12 @@ def plan(close: pd.DataFrame, equity: float, positions: dict, prices: dict, gate
     return out, str(close.index[-1].date())
 
 
+def foreign_positions(positions):
+    """이 전략 심볼이 아닌 포지션 목록. 있으면 다른 봇과 계정을 같이 쓰는 것이다."""
+    return [p["symbol"] for p in positions
+            if float(p.get("contracts") or 0) and p["symbol"] not in S.SYMBOLS]
+
+
 class TrendBot:
     def __init__(self, mode, paper_equity=10_000.0):
         self.mode = mode
@@ -116,6 +122,12 @@ class TrendBot:
         if not self.dry:
             self.ex = config.make_exchange("futures", testnet=(self.mode == "testnet"), use_pro=True)
             await self.ex.load_markets()
+            others = foreign_positions(await self.ex.fetch_positions())
+            if others:
+                # 다른 봇(REBOUND 는 거래대금 상위 120종 = BTC·ETH 포함)과 계정을 같이 쓰면
+                # 서로의 포지션을 자기 것으로 읽고 손절 주문을 지운다. 시작하지 않는다.
+                raise RuntimeError(f"전용 계정이 아니다 — 다른 포지션 {others[:5]}. "
+                                   "데모도 실전도 이 전략만 쓰는 계정(서브계정/별도 데모 키)에서 돌린다.")
             dual = await self.ex.fapiPrivateGetPositionSideDual()
             if str(dual.get("dualSidePosition")).lower() == "true":
                 raise RuntimeError("헤지 모드 계정이다. 이 봇은 단방향(One-way) 모드 전용 — 바이낸스 설정에서 바꿔라.")

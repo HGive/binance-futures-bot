@@ -230,3 +230,11 @@ def test_backtest_applies_same_stop_rule():
 def test_ai_gate_accepts_trend_vt():
     from live import ai_gate
     assert "trend_vt" in ai_gate.STRATEGIES
+
+
+def test_refuses_shared_account():
+    from live.trend_bot import foreign_positions
+    rows = [{"symbol": "BTC/USDT:USDT", "contracts": 0.01}, {"symbol": "HEMI/USDT:USDT", "contracts": 2336},
+            {"symbol": "ETH/USDT:USDT", "contracts": 0}]
+    assert foreign_positions(rows) == ["HEMI/USDT:USDT"]
+    assert foreign_positions(rows[:1]) == []
