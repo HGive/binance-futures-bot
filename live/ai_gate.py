@@ -26,7 +26,7 @@ from datetime import datetime, timezone, timedelta
 LOGS = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "logs")
 GATE = os.path.join(LOGS, "ai_gate.json")
 AUDIT = os.path.join(LOGS, "ai_gate_audit.jsonl")
-STRATEGIES = ("hibernate", "surfer", "rebound", "scalp")
+STRATEGIES = ("hibernate", "surfer", "rebound", "scalp", "trend_vt")
 MAX_DAYS = 7
 
 
