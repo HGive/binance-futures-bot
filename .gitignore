@@ -14,3 +14,6 @@ logs/*.log
 data/ohlcv/*_1m.csv
 data/ohlcv/*_5m.csv
 data/ohlcv/*_15m.csv
+.venv-research/
+data/stocks/
+data/stocks_raw/
