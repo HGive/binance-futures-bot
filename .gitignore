@@ -17,3 +17,4 @@ data/ohlcv/*_15m.csv
 .venv-research/
 data/stocks/
 data/stocks_raw/
+data/funding/
