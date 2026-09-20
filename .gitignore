@@ -18,3 +18,4 @@ data/ohlcv/*_15m.csv
 data/stocks/
 data/stocks_raw/
 data/funding/
+data/stocks_raw/
