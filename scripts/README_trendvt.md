@@ -43,3 +43,28 @@ launchctl load   ~/Library/LaunchAgents/com.algorijun.trendvt.plist   # 재개
 `plist` 의 `TREND_MODE` 를 `testnet` → `live` 로 바꾸고 재로드한다.
 **전용 서브계정**이어야 한다 (봇이 다른 포지션을 발견하면 시작을 거부한다).
 규칙상 데모 1주 → 소액 실전 2주를 거친다 (STRATEGY_RULES 6).
+
+---
+
+# SWING_DCA 자동 실행
+
+같은 TCC 우회를 쓴다. 로그·상태는 `~/Library/Application Support/swingdca/logs/`,
+환경변수는 `SWING_LOG_DIR`.
+
+실행 시각: 매일 **09:10 / 13:10 / 18:10 / 23:10 (KST)**.
+익절·물타기·손절 주문은 거래소에 걸려 있으므로, 봇은 체결 확인과 신규 진입만 한다.
+그래서 자주 돌 필요가 없다.
+
+```bash
+launchctl list | grep swingdca
+tail -f ~/Library/Application\ Support/swingdca/logs/cron.log
+```
+
+## 지금 paper 모드인 이유
+
+데모 계좌는 TREND_VT 가 쓰고 있다(BTC·ETH 롱). SWING_DCA 는 계정 전체를
+자기 자본으로 보고 보유분에 익절·손절 주문을 걸기 때문에, 같은 계정에서 돌리면
+**서로의 주문을 지운다.** 봇의 가드가 이를 감지하고 시작을 거부한다.
+
+데모 실주문으로 넘기려면 **바이낸스 테스트넷 계정을 하나 더** 만들고
+`.env` 에 별도 키를 넣은 뒤 plist 의 `SWING_MODE` 를 `testnet` 으로 바꾼다.

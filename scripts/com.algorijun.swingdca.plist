@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key><string>com.algorijun.swingdca</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/bin/bash</string>
+    <string>/Users/gimhyeongjun/Library/Application Support/swingdca/run.sh</string>
+  </array>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>SWING_MODE</key><string>paper</string>
+    <key>SWING_PAPER_EQUITY</key><string>1000</string>
+  </dict>
+  <!-- 일봉 마감(UTC 00:00 = KST 09:00) 직후 한 번, 그리고 낮 동안 몇 번 더.
+       주문은 거래소에 걸려 있으므로 봇은 체결 확인과 신규 진입만 하면 된다. -->
+  <key>StartCalendarInterval</key>
+  <array>
+    <dict><key>Hour</key><integer>9</integer><key>Minute</key><integer>10</integer></dict>
+    <dict><key>Hour</key><integer>13</integer><key>Minute</key><integer>10</integer></dict>
+    <dict><key>Hour</key><integer>18</integer><key>Minute</key><integer>10</integer></dict>
+    <dict><key>Hour</key><integer>23</integer><key>Minute</key><integer>10</integer></dict>
+  </array>
+  <key>RunAtLoad</key><false/>
+  <key>StandardOutPath</key><string>/Users/gimhyeongjun/Library/Application Support/swingdca/launchd.log</string>
+  <key>StandardErrorPath</key><string>/Users/gimhyeongjun/Library/Application Support/swingdca/launchd.log</string>
+</dict>
+</plist>
