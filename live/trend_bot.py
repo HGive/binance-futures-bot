@@ -33,7 +33,11 @@ import strategies.trend_vt as S  # noqa: E402
 from live import ai_gate  # noqa: E402
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-LOG_DIR = os.path.join(ROOT, "logs")
+# 로그·상태 위치. macOS 는 ~/Desktop, ~/Documents 를 보호해서 launchd 가 그 안에
+# 쓰지 못한다(Operation not permitted). 프로젝트가 그런 폴더 아래 있으면
+# TREND_LOG_DIR 로 보호되지 않는 경로를 지정한다. 상태 파일(킬스위치 자본 고점,
+# 정지 플래그)이 여기 남으므로 경로를 바꾸면 그 이력도 같이 옮겨야 한다.
+LOG_DIR = os.environ.get("TREND_LOG_DIR") or os.path.join(ROOT, "logs")
 DAY_MS = 86_400_000
 PAPER_FEE = 0.0005 + 0.0005     # 백테스트 비용과 같게
 CATCHUP_HOURS = 6               # 일봉 마감 후 이 시간 안이면 따라잡는다. 넘으면 다음 마감을 기다린다
