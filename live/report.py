@@ -84,8 +84,12 @@ def load(spec, mode):
     hist = [norm(h, lev) for h in d.get("history", [])]
     hist = [h for h in hist if h["sym"]]
     # 배관 점검으로 낸 주문은 성과가 아니다. 섞이면 보고서가 거짓말을 한다.
-    probes = [h for h in hist if h["reason"] in PROBE_REASONS]
-    hist = [h for h in hist if h["reason"] not in PROBE_REASONS]
+    # 사유는 "_GONE" 이 덧붙어 오기도 한다 (STOP_GONE_GONE). 앞자락으로 거른다.
+    def _probe(h):
+        r = h["reason"]
+        return any(r == x or r.startswith(x + "_") for x in PROBE_REASONS)
+    probes = [h for h in hist if _probe(h)]
+    hist = [h for h in hist if not _probe(h)]
     return dict(name=name, market=market, lev=lev, path=path,
                 pos=d.get("positions", {}), hist=hist, probes=len(probes),
                 updated=parse_ts(d.get("updated")))

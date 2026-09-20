@@ -9,9 +9,11 @@ import sys
 
 import numpy as np
 import pandas as pd
+import pytest
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import strategies.trend_vt as S  # noqa: E402
+from live import trend_bot  # noqa: E402
 from live.trend_bot import TrendBot, closed_daily, plan  # noqa: E402
 
 DAY = 86_400_000
@@ -252,3 +254,57 @@ def test_amount_below_step_is_skipped_not_raised(tmp_path, monkeypatch):
     asyncio.run(b.rebalance(sym, {"cur_qty": 0.010, "target_qty": 0.0104}, 78_000.0))
     assert [c for c in ex.calls if c[0] == "create"] == []
     assert b.skipped and b.skipped[0]["amount"] == 0.0
+
+
+# ------------------------------------------------------------ 계정 공유
+
+
+def test_foreign_positions_wildcard():
+    """'*' 는 계정을 나눠 쓴다는 선언 — 낯선 종목을 통과시킨다.
+
+    SWING_DCA 는 매일 다른 종목을 고르므로 이름을 미리 적을 수 없다.
+    """
+    pos = [{"symbol": "CAKE/USDT:USDT", "contracts": 21.0, "side": "long"},
+           {"symbol": "XRP/USDT:USDT", "contracts": 100.0, "side": "long"}]
+    assert trend_bot.foreign_positions(pos) == ["CAKE/USDT:USDT", "XRP/USDT:USDT"]
+    assert trend_bot.foreign_positions(pos, {"*"}) == []
+    assert trend_bot.foreign_positions(pos, {"CAKE/USDT:USDT"}) == ["XRP/USDT:USDT"]
+
+
+def test_reserve_equity_subtracted():
+    """남의 시드를 빼야 그만큼 작게 베팅한다. 안 빼면 남의 돈으로 크게 간다."""
+    b = trend_bot.TrendBot("paper", 10_000.0, {"*"}, 1_000.0)
+    assert b.reserve_equity == 1_000.0
+    assert b.reserved == {"*"}
+    src = open(os.path.join(os.path.dirname(__file__), "..",
+                            "live", "trend_bot.py"), encoding="utf-8").read()
+    body = src[src.index("async def account"):src.index("# ── 주문")]
+    assert "self.reserve_equity" in body, "자본에서 남의 시드를 빼는 코드가 없다"
+
+
+def test_parse_symbols():
+    assert trend_bot.parse_symbols("") == set()
+    assert trend_bot.parse_symbols("*") == {"*"}
+    assert trend_bot.parse_symbols("A/B:C, D/E:F") == {"A/B:C", "D/E:F"}
+
+
+def test_rebase_peak_on_basis_change(tmp_path):
+    """자본 기준을 바꾸면 고점도 같이 옮겨야 한다.
+
+    안 옮기면 없던 낙폭이 생겨 킬스위치가 터진다. 실제로 터졌다.
+    """
+    import live.trend_bot as TB
+    old_dir = TB.LOG_DIR
+    TB.LOG_DIR = str(tmp_path)
+    try:
+        b = TB.TrendBot("paper", 10_000.0, {"*"}, 0.0)
+        b.state_path = str(tmp_path / "s.json")
+        b.st.update(peak=4986.42, reserve_equity=0.0)
+        b.reserve_equity = 1_000.0
+        b.rebase_peak()
+        assert b.st["peak"] == pytest.approx(3986.42)
+        assert b.st["reserve_equity"] == 1_000.0
+        b.rebase_peak()                       # 두 번 불러도 한 번만 옮긴다
+        assert b.st["peak"] == pytest.approx(3986.42)
+    finally:
+        TB.LOG_DIR = old_dir

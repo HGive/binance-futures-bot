@@ -248,7 +248,7 @@ class Bot:
     #  절대 안 보인다. 전용 API 로만 조회·취소된다. 이걸 모르면 손절이 걸렸는지
     #  영영 확인 못 하고 시간초과로만 나가게 된다.
     async def algo_state(self, algo_id):
-        """(상태, 체결수량) 을 준다. 못 찾으면 (None, 0).
+        """(상태, 체결수량, 평균체결가) 를 준다. 못 찾으면 (None, 0, 0).
 
         주의: 손절이 터져도 상태는 FILLED 가 아니라 **FINISHED** 다.
         취소했을 때도 FINISHED 로 온다. 둘을 가르는 건 actualQty 뿐이다.
@@ -256,10 +256,16 @@ class Bot:
         """
         try:
             r = await self.ex.fapiPrivateGetAlgoOrder({"algoId": str(algo_id)})
-            return r.get("algoStatus"), float(r.get("actualQty") or 0)
+            # 손절은 STOP_MARKET 이라 방아쇠 가격이 아니라 실제 체결가로 나간다.
+            # 이걸 안 읽고 트리거 가격으로 장부를 적으면 미끄러짐이 통째로 사라진다.
+            avg = 0.0
+            for k in ("avgPrice", "avgprice", "averagePrice"):
+                if r.get(k) not in (None, "", "0", 0):
+                    avg = float(r[k]); break
+            return r.get("algoStatus"), float(r.get("actualQty") or 0), avg
         except Exception as e:
             logging.warning(f"  알고 주문 {algo_id} 조회 실패: {e}")
-            return None, 0.0
+            return None, 0.0, 0.0
 
     async def algo_cancel(self, algo_id):
         try:
@@ -323,10 +329,10 @@ class Bot:
                     pass
             aid = p["ids"].get("sl")
             if aid:
-                st, qty = await self.algo_state(aid)
+                st, qty, avg = await self.algo_state(aid)
                 if qty > 0:                       # 실제로 체결됐다
                     await self.cancel_rest(sym, p, skip="sl")
-                    return await self.settle(sym, p["sl"], "SL")
+                    return await self.settle(sym, avg or p["sl"], "SL")
                 if st not in ("NEW", "WORKING", None):
                     # 안 걸렸는데 사라졌다 = 규칙 3.5 위반 상태. 들고 있으면 안 된다.
                     logging.error(f"{sym} 손절이 거래소에서 사라졌다({st}) — 즉시 정리한다")
@@ -440,7 +446,7 @@ class Bot:
                              + ", ".join(f"{x['type']}@{x.get('price')}" for x in oo))
             except Exception as e:
                 logging.warning(f"  미체결 조회 실패: {e}")
-            st, _q = await self.algo_state(p["ids"].get("sl"))
+            st, _q, _a = await self.algo_state(p["ids"].get("sl"))
             logging.info(f"  손절(알고 주문) 상태: {st}"
                          + ("  ← 거래소에 살아있다" if st == "NEW" else "  ← 문제!"))
 
@@ -528,9 +534,9 @@ class Bot:
             aid = p.get("ids", {}).get("sl")
             px, why = p["entry"], "GONE"
             if aid:
-                st, q = await self.algo_state(aid)
+                st, q, qavg = await self.algo_state(aid)
                 if q > 0:
-                    px, why = p["sl"], "SL"
+                    px, why = qavg or p["sl"], "SL"
             logging.warning(f"[대조] {sym} 거래소엔 없다 — {why} 로 정리한다")
             await self.cancel_rest(sym, p, skip="sl" if why == "SL" else None)
             await self.settle(sym, px, why)

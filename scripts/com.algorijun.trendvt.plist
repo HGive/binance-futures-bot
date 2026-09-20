@@ -9,7 +9,12 @@
     <string>/Users/gimhyeongjun/Library/Application Support/trendvt/run.sh</string>
   </array>
   <key>EnvironmentVariables</key>
-  <dict><key>TREND_MODE</key><string>testnet</string></dict>
+  <dict>
+    <key>TREND_MODE</key><string>testnet</string>
+    <!-- 선물 데모 계정을 SWING_DCA 와 공유. 실전 서브계정으로 옮기면 아래 둘을 지운다. -->
+    <key>TREND_RESERVED</key><string>*</string>
+    <key>TREND_RESERVE_EQUITY</key><string>1000</string>
+  </dict>
   <key>StartCalendarInterval</key>
   <array>
     <dict><key>Hour</key><integer>9</integer><key>Minute</key><integer>5</integer></dict>

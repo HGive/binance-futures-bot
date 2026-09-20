@@ -14,6 +14,8 @@ TREND_VT 실행 봇 — BTC·ETH 무기한, 하루 한 번 (UTC 00:00 일봉 마
   - 같은 날 두 번 돌려도 안전하다: 목표와 보유가 같으면 밴드 규칙이 거래를 막는다.
   - 재난 손절은 STOP_MARKET 알고 주문으로 매일 갱신한다 (규칙 3.5). 못 걸면 그 종목을 정리한다.
   - **전용 서브계정**에서 돌린다. 계정 자본 전체를 이 전략 자본으로 본다.
+    데모에서만, 다른 봇과 나눠 쓸 수 있다: `--reserved` 로 남의 종목을 가드에서 빼고
+    `--reserve-equity` 로 남의 시드를 자본에서 뺀다. 둘은 같이 써야 한다.
 """
 import argparse
 import asyncio
@@ -105,16 +107,35 @@ def precise_amount(ex, sym, qty):
         return 0.0
 
 
-def foreign_positions(positions):
-    """이 전략 심볼이 아닌 포지션 목록. 있으면 다른 봇과 계정을 같이 쓰는 것이다."""
+def parse_symbols(text):
+    """쉼표로 나열한 심볼 목록. 빈 문자열은 빈 집합."""
+    return {s.strip() for s in (text or "").split(",") if s.strip()}
+
+
+def foreign_positions(positions, reserved=()):
+    """이 전략 심볼이 아닌 포지션 목록. 있으면 다른 봇과 계정을 같이 쓰는 것이다.
+
+    `reserved` 에 넣은 종목은 '남의 것인 줄 알고 있다'는 선언이라 통과시킨다.
+    이 봇은 어차피 S.SYMBOLS 만 읽고 주문하므로 그 포지션을 건드리지 않는다.
+
+    `"*"` 는 '이 계정을 다른 봇과 나눠 쓴다'는 뜻이다. 상대가 종목을 매일
+    바꾸면(SWING_DCA 처럼) 이름을 미리 적을 수 없다. 대신 --reserve-equity 로
+    남의 시드를 반드시 빼야 한다 — setup() 이 그걸 강제한다.
+    """
+    reserved = set(reserved)
+    if "*" in reserved:
+        return []
     return [p["symbol"] for p in positions
-            if float(p.get("contracts") or 0) and p["symbol"] not in S.SYMBOLS]
+            if float(p.get("contracts") or 0)
+            and p["symbol"] not in S.SYMBOLS and p["symbol"] not in reserved]
 
 
 class TrendBot:
-    def __init__(self, mode, paper_equity=10_000.0):
+    def __init__(self, mode, paper_equity=10_000.0, reserved=None, reserve_equity=0.0):
         self.mode = mode
         self.dry = mode == "paper"
+        self.reserved = set(reserved or ())
+        self.reserve_equity = float(reserve_equity or 0.0)
         self.state_path = os.path.join(LOG_DIR, f"trend_vt_{mode}.json")
         self.journal = os.path.join(LOG_DIR, f"trend_vt_{mode}.jsonl")
         self.st = {"peak": None, "halted": False, "last_bar": None}
@@ -135,12 +156,18 @@ class TrendBot:
         if not self.dry:
             self.ex = config.make_exchange("futures", testnet=(self.mode == "testnet"), use_pro=True)
             await self.ex.load_markets()
-            others = foreign_positions(await self.ex.fetch_positions())
+            others = foreign_positions(await self.ex.fetch_positions(), self.reserved)
             if others:
                 # 다른 봇(REBOUND 는 거래대금 상위 120종 = BTC·ETH 포함)과 계정을 같이 쓰면
                 # 서로의 포지션을 자기 것으로 읽고 손절 주문을 지운다. 시작하지 않는다.
                 raise RuntimeError(f"전용 계정이 아니다 — 다른 포지션 {others[:5]}. "
-                                   "데모도 실전도 이 전략만 쓰는 계정(서브계정/별도 데모 키)에서 돌린다.")
+                                   "데모도 실전도 이 전략만 쓰는 계정(서브계정/별도 데모 키)에서 "
+                                   "돌린다. 데모에서 일부러 나눠 쓴다면 그 종목을 --reserved 로, "
+                                   "남의 시드를 --reserve-equity 로 빼라.")
+            if self.reserved and not self.reserve_equity:
+                raise RuntimeError(
+                    "--reserved 를 쓰면 --reserve-equity 도 있어야 한다. 계정을 나눠 쓰는데 "
+                    "계좌 잔고를 전부 자기 자본으로 세면 그만큼 크게 베팅한다.")
             dual = await self.ex.fapiPrivateGetPositionSideDual()
             if str(dual.get("dualSidePosition")).lower() == "true":
                 raise RuntimeError("헤지 모드 계정이다. 이 봇은 단방향(One-way) 모드 전용 — 바이낸스 설정에서 바꿔라.")
@@ -151,6 +178,26 @@ class TrendBot:
                         await call()
                     except Exception as e:     # 이미 설정돼 있으면 -4046 등으로 거절된다
                         logging.info(f"[{sym}] 설정 건너뜀: {type(e).__name__}: {str(e)[:80]}")
+
+    def rebase_peak(self):
+        """자본 기준(--reserve-equity)이 바뀌면 킬스위치 고점도 같이 옮긴다.
+
+        안 옮기면 기준을 바꾼 순간 옛 고점과 비교돼 없던 낙폭이 생긴다.
+        실제로 1,000 을 빼자마자 -21% 로 읽혀 킬스위치가 터졌다.
+        """
+        old = self.st.get("reserve_equity")
+        if old is None:
+            self.st["reserve_equity"] = self.reserve_equity
+            return
+        if float(old) == self.reserve_equity:
+            return
+        delta = self.reserve_equity - float(old)
+        if self.st.get("peak"):
+            self.st["peak"] = float(self.st["peak"]) - delta
+            logging.info(f"자본 기준 변경 {old} → {self.reserve_equity} "
+                         f"— 고점도 {self.st['peak']:.2f} 로 옮긴다")
+        self.st["reserve_equity"] = self.reserve_equity
+        self.save()
 
     async def close_all(self):
         for ex in (self.pub, self.ex):
@@ -213,6 +260,9 @@ class TrendBot:
             return self.st["cash"] + upnl, pos
         bal = await self.ex.fetch_balance()
         equity = float(bal["info"].get("totalMarginBalance") or bal["USDT"]["total"])
+        # 계정을 나눠 쓸 때 남의 시드를 뺀다. 근사다 — 상대 봇의 평가손익까지는
+        # 못 걷어낸다. 데모에서만 쓰고, 실전은 전용 서브계정으로 간다.
+        equity -= self.reserve_equity
         pos = {}
         for p in await self.ex.fetch_positions(list(S.SYMBOLS)):
             q = float(p.get("contracts") or 0)
@@ -336,6 +386,7 @@ class TrendBot:
             self.paper_stops()
         px = await self.prices()
         equity, pos = await self.account(px)
+        self.rebase_peak()
         peak = max(self.st.get("peak") or equity, equity)
         self.st["peak"] = peak
         dd = equity / peak - 1
@@ -412,6 +463,11 @@ async def main():
     ap.add_argument("--once", action="store_true")
     ap.add_argument("--loop", action="store_true")
     ap.add_argument("--paper-equity", type=float, default=10_000.0)
+    ap.add_argument("--reserved", default=os.environ.get("TREND_RESERVED", ""),
+                    help="다른 봇 몫인 심볼(쉼표). 가드가 이 포지션을 무시한다.")
+    ap.add_argument("--reserve-equity", type=float,
+                    default=float(os.environ.get("TREND_RESERVE_EQUITY") or 0),
+                    help="다른 봇 몫인 시드(USDT). 자본에서 뺀다.")
     ap.add_argument("--reset-kill", action="store_true")
     ap.add_argument("--i-know", action="store_true")
     a = ap.parse_args()
@@ -422,7 +478,10 @@ async def main():
     if a.mode == "live" and not a.i_know:
         logging.error("실전은 --i-know 가 필요하다 (STRATEGY_RULES 6: 테스트넷 1주 → 소액 2주 뒤에).")
         return
-    bot = TrendBot(a.mode, a.paper_equity)
+    bot = TrendBot(a.mode, a.paper_equity, parse_symbols(a.reserved), a.reserve_equity)
+    if bot.reserved:
+        logging.info(f"계정 공유 | 남의 시드 {a.reserve_equity:.0f} 제외 | "
+                     f"남의 종목 {sorted(bot.reserved)}")
     if a.reset_kill:
         bot.st.update(halted=False, peak=None)
         bot.save()
