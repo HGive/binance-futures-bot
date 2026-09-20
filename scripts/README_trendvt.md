@@ -60,11 +60,34 @@ launchctl list | grep swingdca
 tail -f ~/Library/Application\ Support/swingdca/logs/cron.log
 ```
 
-## 지금 paper 모드인 이유
+## 데모 계정 하나를 둘이 나눠 쓴다
 
-데모 계좌는 TREND_VT 가 쓰고 있다(BTC·ETH 롱). SWING_DCA 는 계정 전체를
-자기 자본으로 보고 보유분에 익절·손절 주문을 걸기 때문에, 같은 계정에서 돌리면
-**서로의 주문을 지운다.** 봇의 가드가 이를 감지하고 시작을 거부한다.
+선물 데모 계정(`BINANCE_TESTNET_KEY`)은 TREND_VT 와 SWING_DCA 가 같이 쓴다.
+계정을 더 만들 필요는 없다. 대신 두 가지를 못 박아야 한다.
 
-데모 실주문으로 넘기려면 **바이낸스 테스트넷 계정을 하나 더** 만들고
-`.env` 에 별도 키를 넣은 뒤 plist 의 `SWING_MODE` 를 `testnet` 으로 바꾼다.
+| 설정 | 값 | 없으면 |
+| --- | --- | --- |
+| `SWING_CAPITAL` | `1000` | SWING_DCA 가 계좌 전액(TREND_VT 몫 포함)을 자기 시드로 세서 그만큼 더 산다 |
+| `SWING_RESERVED` | `BTC/USDT:USDT,ETH/USDT:USDT` | SWING_DCA 가 BTC·ETH 를 골라 TREND_VT 포지션과 합쳐진다 (단방향 모드) |
+
+둘 다 plist 의 `EnvironmentVariables` 에 있다. `--reserved` 만 주고 `--capital`
+을 빼면 봇이 시작을 거부한다.
+
+안전장치 세 가지:
+
+- `positions()` 는 **자기가 연 종목만** 돌려준다. 남의 롱에 익절·손절을 걸지 않는다.
+- 예약하지 않은 낯선 포지션이 있으면 여전히 시작을 거부한다 — 상태 파일을
+  잃어버려 자기 포지션을 잊은 경우가 조용히 넘어가지 않는다.
+- 진입할 때 **격리 마진**으로 맞춘다. 이 전략의 손실이 TREND_VT 증거금을 갉아먹지 않는다.
+
+자기 자본은 계좌 잔고가 아니라 이렇게 센다:
+
+    시드(SWING_CAPITAL) + 자기 종목의 실현손익·수수료·펀딩 + 자기 포지션 평가손익
+
+실현손익은 매번 거래소 income 기록에서 다시 더한다. 파일에 누적하면 실행이
+겹치거나 빠졌을 때 틀어진다.
+
+### 현물 데모 계정은 별개다
+
+`BINANCE_SPOT_TESTNET_KEY` 는 **현물**(testnet.binance.vision) 이다.
+선물 데모와 아예 다른 거래소라 선물 봇이 쓸 수 없다. HIBERNATE / SURFER 몫이다.

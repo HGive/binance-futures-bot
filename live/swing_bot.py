@@ -17,6 +17,11 @@ SWING_DCA 실행 봇 — 코인 스윙 물타기, 하루 한 번 + 중간 점검
   - 물타기가 체결되면 평단이 내려가므로 익절·손절을 다음 실행에서 다시 건다.
     그 사이 남아있는 옛 주문은 **익절은 더 비싸고 손절은 더 높다** — 둘 다 안전한 방향이다.
   - 같은 날 여러 번 돌려도 안전하다. 이미 맞는 주문이 걸려 있으면 건드리지 않는다.
+  - **다른 봇과 계정을 같이 쓸 수 있다** (`--capital`, `--reserved`).
+        `--capital`   자기 시드를 금액으로 못 박는다. 계좌 잔고를 안 본다.
+                      자기 자본 = 시드 + 자기 종목의 실현손익 + 자기 포지션 평가손익.
+        `--reserved`  다른 봇 몫인 종목. 후보에서 빼고, 그 포지션은 건드리지 않는다.
+        이 둘이 없으면 계좌 전체를 자기 것으로 보고 남의 포지션에 주문을 건다.
 
 기대치는 strategies/swing_dca.py 머리말 참고. 요약: 연 +24%, MDD -62%,
 승률 97%. **BTC·ETH 그냥 보유(연 +33%)를 이기지 못한다.** 알고 돌린다.
@@ -47,6 +52,14 @@ TOP_N = 150                 # 거래대금 상위 이만큼만 후보로 본다 
 GATE_KEY = "swing_dca"
 P = S.LIVE
 
+# 계정을 나눠 쓸 때 자기 실현손익으로 인정하는 수입 항목.
+INCOME_KINDS = ("REALIZED_PNL", "COMMISSION", "FUNDING_FEE")
+
+
+def parse_symbols(text):
+    """쉼표로 나열한 심볼 목록. 빈 문자열은 빈 집합."""
+    return {s.strip() for s in (text or "").split(",") if s.strip()}
+
 
 def precise_amount(ex, sym, amt):
     """수량 단위 미만이면 0. ccxt 는 이때 예외를 던져서 봇이 멈춘다."""
@@ -64,9 +77,11 @@ def closed_daily(ohlcv, now_ms):
 
 
 class SwingBot:
-    def __init__(self, mode, paper_equity=1_000.0):
+    def __init__(self, mode, paper_equity=1_000.0, capital=0.0, reserved=None):
         self.mode = mode
         self.dry = mode == "paper"
+        self.capital = float(capital or 0.0)
+        self.reserved = set(reserved or ())
         self.state_path = os.path.join(LOG_DIR, f"swing_dca_{mode}.json")
         self.journal = os.path.join(LOG_DIR, f"swing_dca_{mode}.jsonl")
         self.st = {"peak": None, "halted": False, "cooldown": {}}
@@ -92,7 +107,15 @@ class SwingBot:
                     f"이 전략이 열지 않은 포지션이 있다: {others[:5]}. "
                     "SWING_DCA 는 계정 전체를 자기 자본으로 보고 보유분에 익절·손절을 건다. "
                     "다른 봇(예: TREND_VT 의 BTC·ETH 롱)과 계정을 같이 쓰면 서로의 주문을 "
-                    "지운다. 전용 서브계정에서 돌린다.")
+                    "지운다. 전용 서브계정에서 돌리거나, 그 종목을 --reserved 로 빼고 "
+                    "--capital 로 자기 시드를 못 박는다.")
+            if self.reserved and not self.capital:
+                raise RuntimeError(
+                    "--reserved 를 쓰면 --capital 도 있어야 한다. 계정을 나눠 쓰는데 "
+                    "계좌 잔고를 자기 시드로 세면 남의 돈만큼 더 산다.")
+            if self.st.get("started_ms") is None:
+                self.st["started_ms"] = self.ex.milliseconds()
+                self.save()
             dual = await self.ex.fapiPrivateGetPositionSideDual()
             if str(dual.get("dualSidePosition")).lower() == "true":
                 raise RuntimeError("헤지 모드 계정이다. 단방향(One-way) 전용이다.")
@@ -105,20 +128,30 @@ class SwingBot:
         거래소에서 읽고(규칙 3.6), 기록은 '어느 종목을 내가 열었나'만 담는다.
         이게 없으면 같은 계정의 다른 롱 봇(TREND_VT 의 BTC·ETH)을 자기 포지션으로
         오인해 그 손절 주문을 지운다.
+
+        `reserved` 에 넣은 종목은 '남의 것인 줄 알고 있다'는 뜻이라 통과시킨다.
+        대신 후보에서도 빠지므로 이 전략이 그 종목을 여는 일은 없다.
         """
         owned = set(self.st.get("owned", []))
         out = []
         for p in positions:
             if not float(p.get("contracts") or 0):
                 continue
-            if p.get("side") == "short" or p["symbol"] not in owned:
-                out.append(p["symbol"])
+            sym = p["symbol"]
+            if sym in self.reserved:
+                continue
+            if p.get("side") == "short" or sym not in owned:
+                out.append(sym)
         return out
 
     def remember(self, sym):
         self.st.setdefault("owned", [])
         if sym not in self.st["owned"]:
             self.st["owned"].append(sym)
+        # 실현손익을 되짚으려면 '한 번이라도 가졌던' 목록이 따로 필요하다.
+        self.st.setdefault("owned_ever", [])
+        if sym not in self.st["owned_ever"]:
+            self.st["owned_ever"].append(sym)
 
     def forget(self, sym):
         if sym in self.st.get("owned", []):
@@ -141,6 +174,8 @@ class SwingBot:
         for sym, t in tickers.items():
             m = self.pub.markets.get(sym)
             if not m or not m.get("swap") or m.get("quote") != S.QUOTE or not m.get("active"):
+                continue
+            if sym in self.reserved:        # 다른 봇 몫 — 이 전략은 손대지 않는다
                 continue
             qv = float(t.get("quoteVolume") or 0)
             if qv > 0:
@@ -180,17 +215,56 @@ class SwingBot:
         if self.dry:
             return self.st["cash"] + sum(
                 v["qty"] * v["last"] for v in self.st["pos"].values())
+        if self.capital:
+            # 계좌 잔고에는 다른 봇의 돈이 섞여 있다. 자기 몫만 센다.
+            return self.capital + await self.own_realized() + await self.own_unrealized()
         bal = await self.ex.fetch_balance()
         return float(bal[S.QUOTE]["total"])
 
+    async def own_realized(self):
+        """이 전략이 한 번이라도 가졌던 종목의 실현손익·수수료·펀딩 합계.
+
+        거래소 기록에서 매번 다시 더한다 — 파일에 누적하면 실행이 겹치거나
+        빠졌을 때 틀어진다(규칙 3.6).
+        """
+        ever = [s for s in self.st.get("owned_ever", []) if s in self.ex.markets]
+        if not ever:
+            return 0.0
+        ids = {self.ex.market(s)["id"] for s in ever}
+        cursor, total = int(self.st.get("started_ms") or 0), 0.0
+        for _ in range(20):                     # 페이지 상한 — 무한루프 방지
+            rows = await self.ex.fapiPrivateGetIncome(
+                {"startTime": cursor, "limit": 1000})
+            if not rows:
+                break
+            for r in rows:
+                if r.get("symbol") in ids and r.get("incomeType") in INCOME_KINDS:
+                    total += float(r.get("income") or 0)
+            if len(rows) < 1000:
+                break
+            cursor = int(rows[-1]["time"]) + 1
+        return total
+
+    async def own_unrealized(self):
+        """자기 포지션의 평가손익."""
+        owned = set(self.st.get("owned", []))
+        return sum(float(p.get("unrealizedPnl") or 0)
+                   for p in await self.ex.fetch_positions()
+                   if p["symbol"] in owned and float(p.get("contracts") or 0))
+
     async def positions(self):
-        """{심볼: {qty, avg}} — 거래소가 진실이다 (규칙 3.6)."""
+        """{심볼: {qty, avg}} — 거래소가 진실이다 (규칙 3.6).
+
+        **자기가 연 종목만** 돌려준다. 계정을 나눠 쓸 때 이게 없으면 남의 롱에
+        익절·손절 주문을 걸어버린다.
+        """
         if self.dry:
             return {k: {"qty": v["qty"], "avg": v["avg"]} for k, v in self.st["pos"].items()}
+        owned = set(self.st.get("owned", []))
         out = {}
         for p in await self.ex.fetch_positions():
             q = float(p.get("contracts") or 0)
-            if q > 0 and p.get("side") == "long":
+            if q > 0 and p.get("side") == "long" and p["symbol"] in owned:
                 out[p["symbol"]] = {"qty": q, "avg": float(p["entryPrice"])}
         return out
 
@@ -331,6 +405,12 @@ class SwingBot:
             logging.info(f"[{sym}] 최소 주문액 미달 — 건너뜀")
             return False
         try:
+            # 격리 마진 — 계정을 나눠 쓸 때 이 전략의 손실이 다른 봇의 증거금을
+            # 갉아먹지 않게 한다. 이미 격리면 거래소가 거부하므로 무시한다.
+            await self.ex.set_margin_mode("isolated", sym)
+        except Exception:  # noqa: BLE001
+            pass
+        try:
             await self.ex.set_leverage(S.LEVERAGE, sym)
         except Exception:  # noqa: BLE001
             pass
@@ -430,6 +510,11 @@ async def main():
     ap.add_argument("--mode", choices=["paper", "testnet", "live"], default="paper")
     ap.add_argument("--once", action="store_true")
     ap.add_argument("--paper-equity", type=float, default=1_000.0)
+    ap.add_argument("--capital", type=float, default=float(os.environ.get("SWING_CAPITAL") or 0),
+                    help="자기 시드(USDT). 주면 계좌 잔고 대신 이 금액을 자본으로 쓴다. "
+                         "계정을 다른 봇과 나눠 쓸 때 필요하다.")
+    ap.add_argument("--reserved", default=os.environ.get("SWING_RESERVED", ""),
+                    help="다른 봇 몫인 심볼(쉼표). 후보에서 빼고 그 포지션은 건드리지 않는다.")
     ap.add_argument("--reset-kill", action="store_true")
     ap.add_argument("--i-know", action="store_true")
     a = ap.parse_args()
@@ -442,7 +527,9 @@ async def main():
     if a.mode == "live" and not a.i_know:
         print("실전은 --i-know 가 필요하다. 규칙 6: 데모 1주 → 소액 실전 2주.")
         return 1
-    bot = SwingBot(a.mode, a.paper_equity)
+    bot = SwingBot(a.mode, a.paper_equity, a.capital, parse_symbols(a.reserved))
+    if bot.reserved:
+        logging.info(f"계정 공유 | 시드 {a.capital:.0f} {S.QUOTE} | 제외 {sorted(bot.reserved)}")
     if a.reset_kill:
         bot.st["halted"] = False
         bot.st["peak"] = None

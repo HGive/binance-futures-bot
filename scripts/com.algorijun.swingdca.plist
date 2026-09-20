@@ -10,8 +10,11 @@
   </array>
   <key>EnvironmentVariables</key>
   <dict>
-    <key>SWING_MODE</key><string>paper</string>
+    <key>SWING_MODE</key><string>testnet</string>
     <key>SWING_PAPER_EQUITY</key><string>1000</string>
+    <!-- 선물 데모 계정을 TREND_VT 와 공유한다. 시드를 못 박고 BTC·ETH 를 뺀다. -->
+    <key>SWING_CAPITAL</key><string>1000</string>
+    <key>SWING_RESERVED</key><string>BTC/USDT:USDT,ETH/USDT:USDT</string>
   </dict>
   <!-- 일봉 마감(UTC 00:00 = KST 09:00) 직후 한 번, 그리고 낮 동안 몇 번 더.
        주문은 거래소에 걸려 있으므로 봇은 체결 확인과 신규 진입만 하면 된다. -->

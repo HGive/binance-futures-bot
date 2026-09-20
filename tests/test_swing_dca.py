@@ -3,6 +3,7 @@
 가장 중요한 것은 **계정 공유 가드**다. 같은 계정에서 TREND_VT 가 BTC·ETH 롱을
 들고 있는데 SWING_DCA 가 그걸 자기 포지션으로 오인하면 서로의 손절 주문을 지운다.
 """
+import asyncio
 import os
 import sys
 
@@ -139,9 +140,11 @@ class FakeState(dict):
     pass
 
 
-def _bot(owned=None):
+def _bot(owned=None, reserved=None):
     b = swing_bot.SwingBot.__new__(swing_bot.SwingBot)
     b.st = {"owned": list(owned or [])}
+    b.reserved = set(reserved or ())
+    b.capital = 0.0
     return b
 
 
@@ -187,6 +190,74 @@ def test_remember_forget():
     b.forget("A/USDT:USDT")
     assert b.st["owned"] == []
     b.forget("없는것")                     # 없는 걸 지워도 안 터진다
+
+
+def test_owned_ever_survives_forget():
+    """실현손익을 되짚으려면 청산 뒤에도 종목 이름이 남아 있어야 한다."""
+    b = _bot()
+    b.remember("A/USDT:USDT")
+    b.forget("A/USDT:USDT")
+    assert b.st["owned"] == []
+    assert b.st["owned_ever"] == ["A/USDT:USDT"]
+
+
+# ------------------------------------------------------- 계정 공유 (reserved)
+
+
+def test_reserved_positions_are_tolerated():
+    """--reserved 로 '남의 것인 줄 안다'고 선언한 종목은 가드를 막지 않는다."""
+    b = _bot(owned=["CAKE/USDT:USDT"],
+             reserved=["BTC/USDT:USDT", "ETH/USDT:USDT"])
+    pos = [
+        {"symbol": "BTC/USDT:USDT", "contracts": 0.02, "side": "long"},
+        {"symbol": "ETH/USDT:USDT", "contracts": 0.6, "side": "short"},
+        {"symbol": "CAKE/USDT:USDT", "contracts": 20.0, "side": "long"},
+    ]
+    assert b.foreign_positions(pos) == []
+
+
+def test_reserved_does_not_whitelist_everything():
+    """예약 안 한 남의 포지션은 여전히 걸러야 한다."""
+    b = _bot(owned=[], reserved=["BTC/USDT:USDT"])
+    pos = [
+        {"symbol": "BTC/USDT:USDT", "contracts": 0.02, "side": "long"},
+        {"symbol": "SOL/USDT:USDT", "contracts": 5.0, "side": "long"},
+    ]
+    assert b.foreign_positions(pos) == ["SOL/USDT:USDT"]
+
+
+def test_positions_only_returns_owned():
+    """**가장 위험한 경우.** 자기가 열지 않은 롱을 돌려주면 그 포지션에
+    익절·손절 주문을 걸어 다른 봇을 망가뜨린다."""
+    async def fake_fetch():
+        return [
+            {"symbol": "BTC/USDT:USDT", "contracts": 0.02, "side": "long", "entryPrice": 81000.0},
+            {"symbol": "CAKE/USDT:USDT", "contracts": 20.0, "side": "long", "entryPrice": 2.4},
+        ]
+
+    b = _bot(owned=["CAKE/USDT:USDT"], reserved=["BTC/USDT:USDT"])
+    b.dry = False
+    b.ex = type("E", (), {"fetch_positions": staticmethod(fake_fetch)})()
+    out = asyncio.run(b.positions())
+    assert list(out) == ["CAKE/USDT:USDT"]
+
+
+def test_parse_symbols():
+    assert swing_bot.parse_symbols("") == set()
+    assert swing_bot.parse_symbols(None) == set()
+    assert swing_bot.parse_symbols("BTC/USDT:USDT, ETH/USDT:USDT") == {
+        "BTC/USDT:USDT", "ETH/USDT:USDT"}
+
+
+def test_reserved_symbols_excluded_from_universe():
+    """후보 선정에서 예약 종목을 빼는 코드가 있어야 한다.
+
+    이게 빠지면 SWING_DCA 가 BTC 를 골라 TREND_VT 포지션과 합쳐진다.
+    """
+    src = open(os.path.join(os.path.dirname(__file__), "..",
+                            "live", "swing_bot.py"), encoding="utf-8").read()
+    body = src[src.index("async def universe"):src.index("async def equity")]
+    assert "self.reserved" in body
 
 
 # ------------------------------------------------------------------ 주문 수량
