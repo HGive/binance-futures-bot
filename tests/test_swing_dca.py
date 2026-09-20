@@ -235,3 +235,39 @@ def test_documented_expectation_is_honest():
     src = open(os.path.join(os.path.dirname(__file__), "..",
                             "strategies", "swing_dca.py"), encoding="utf-8").read()
     assert "보유를 이기지 못한다" in src
+
+
+# ------------------------------------------------------------------ 조건부 주문 응답
+
+
+def test_algo_rows_handles_list():
+    """바이낸스는 조건부 주문을 **list** 로 준다.
+
+    dict 로만 처리하면 항상 빈 목록이 나와서 '손절이 없다'고 판단하고,
+    매 실행마다 손절을 새로 걸고 이전 것을 지운다. 실제로 이 버그가 있었다.
+    """
+    rows = [{"algoId": "1", "symbol": "BTCUSDT", "stopPrice": "71722.8"}]
+    assert swing_bot.SwingBot.algo_rows(rows) == rows
+
+
+def test_algo_rows_handles_dict():
+    rows = [{"algoId": "1", "symbol": "BTCUSDT"}]
+    assert swing_bot.SwingBot.algo_rows({"orders": rows}) == rows
+    assert swing_bot.SwingBot.algo_rows({}) == []
+    assert swing_bot.SwingBot.algo_rows(None) == []
+
+
+def test_algo_stop_price_reads_both_fields():
+    assert swing_bot.SwingBot.algo_stop_price({"stopPrice": "100.5"}) == pytest.approx(100.5)
+    assert swing_bot.SwingBot.algo_stop_price({"triggerPrice": "99"}) == pytest.approx(99.0)
+    assert swing_bot.SwingBot.algo_stop_price({}) == 0.0
+
+
+def test_stop_placed_before_old_cancelled():
+    """손절은 새로 건 **다음에** 옛것을 지워야 한다. 순서가 반대면 손절 없는 구간이 생긴다."""
+    src = open(os.path.join(os.path.dirname(__file__), "..",
+                            "live", "swing_bot.py"), encoding="utf-8").read()
+    body = src[src.index("if not have_stop:"):src.index("if not have_tp:")]
+    create = body.index("create_order")
+    delete = body.index("DeleteAlgoOrder")
+    assert create < delete, "손절 생성이 삭제보다 먼저여야 한다"

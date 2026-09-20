@@ -195,6 +195,25 @@ class SwingBot:
         return out
 
     # ---------------------------------------------------------------- 주문
+    @staticmethod
+    def algo_rows(resp):
+        """조건부 주문 응답을 목록으로. **바이낸스는 list 를 준다** — dict 로만
+        처리하면 손절이 항상 '없다'고 나와 매번 새로 걸고 옛것을 지운다."""
+        if isinstance(resp, list):
+            return resp
+        if isinstance(resp, dict):
+            return resp.get("orders", []) or []
+        return []
+
+    @staticmethod
+    def algo_stop_price(o):
+        return float(o.get("stopPrice") or o.get("triggerPrice") or 0)
+
+    async def open_algos(self, sym):
+        mid = self.ex.market(sym)["id"]
+        rows = self.algo_rows(await self.ex.fapiPrivateGetOpenAlgoOrders({}))
+        return [o for o in rows if o.get("symbol") == mid]
+
     async def ensure_orders(self, sym, pos, budget):
         """이 종목에 필요한 주문(물타기·익절·손절)이 정확히 걸려 있게 만든다."""
         avg, qty = pos["avg"], pos["qty"]
@@ -216,8 +235,7 @@ class SwingBot:
             return
 
         existing = await self.ex.fetch_open_orders(sym)
-        algos = await self.ex.fapiPrivateGetOpenAlgoOrders({"symbol": self.ex.market(sym)["id"]})
-        algo_list = algos.get("orders", []) if isinstance(algos, dict) else []
+        algo_list = await self.open_algos(sym)
 
         def near(a, b):
             return abs(a - b) / max(b, 1e-12) < 0.002
@@ -227,8 +245,7 @@ class SwingBot:
         have_add = "add" not in want or any(
             o["side"] == "buy" and o["type"] == "limit"
             and near(float(o["price"]), want["add"][0]) for o in existing)
-        have_stop = any(near(float(a.get("stopPrice") or a.get("triggerPrice") or 0),
-                             want["stop"][0]) for a in algo_list)
+        have_stop = any(near(self.algo_stop_price(a), want["stop"][0]) for a in algo_list)
 
         # 안 맞는 주문은 지운다
         for o in existing:
@@ -242,19 +259,24 @@ class SwingBot:
                     logging.warning(f"[{sym}] 주문 취소 실패 {o['id']}: {e}")
 
         if not have_stop:
-            for a in algo_list:
-                try:
-                    await self.ex.fapiPrivateDeleteAlgoOrder({"algoId": a.get("algoId")})
-                except Exception:  # noqa: BLE001
-                    pass
+            # 새 손절을 **먼저** 걸고, 그 다음 나머지를 지운다.
+            # 반대로 하면 손절이 하나도 없는 구간이 생긴다 (trend_bot 과 같은 규칙).
             amt = precise_amount(self.ex, sym, qty)
             if amt > 0:
                 try:
-                    await self.ex.create_order(
+                    o = await self.ex.create_order(
                         sym, "STOP_MARKET", "sell", amt, None,
                         {"stopPrice": self.ex.price_to_precision(sym, want["stop"][0]),
                          "reduceOnly": True, "workingType": "MARK_PRICE"})
                     logging.info(f"[{sym}] 손절 {want['stop'][0]:.6g}")
+                    keep = str(o.get("id") or o.get("info", {}).get("algoId") or "")
+                    for a in await self.open_algos(sym):
+                        if str(a.get("algoId")) != keep:
+                            try:
+                                await self.ex.fapiPrivateDeleteAlgoOrder(
+                                    {"algoId": str(a["algoId"])})
+                            except Exception:  # noqa: BLE001
+                                pass
                 except Exception as e:  # noqa: BLE001
                     logging.error(f"[{sym}] 손절 실패 — 포지션을 정리한다: {e}")
                     await self.market_close(sym, qty)
