@@ -19,3 +19,8 @@ data/stocks/
 data/stocks_raw/
 data/funding/
 data/stocks_raw/
+data/ohlcv/*_1h.csv
+data/bulk/
+data/*.parquet
+.DS_Store
+.playwright-mcp/
