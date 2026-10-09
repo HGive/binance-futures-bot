@@ -3,6 +3,8 @@
 .env
 .idea/
 .venv/
+/data/
+/logs/
 /venv
 __pycache__/
 data/flow/

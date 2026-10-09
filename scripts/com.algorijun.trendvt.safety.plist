@@ -1,0 +1,32 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>EnvironmentVariables</key>
+	<dict>
+		<key>TREND_MAINTENANCE</key>
+		<string>1</string>
+		<key>TREND_MODE</key>
+		<string>testnet</string>
+		<key>TREND_RESERVED</key>
+		<string>*</string>
+		<key>TREND_RESERVE_EQUITY</key>
+		<string>1000</string>
+	</dict>
+	<key>Label</key>
+	<string>com.algorijun.trendvt.safety</string>
+	<key>ProgramArguments</key>
+	<array>
+		<string>/bin/bash</string>
+		<string>/Users/gimhyeongjun/Library/Application Support/trendvt/run.sh</string>
+	</array>
+	<key>RunAtLoad</key>
+	<false/>
+	<key>StandardErrorPath</key>
+	<string>/Users/gimhyeongjun/Library/Application Support/trendvt/launchd.log</string>
+	<key>StandardOutPath</key>
+	<string>/Users/gimhyeongjun/Library/Application Support/trendvt/launchd.log</string>
+	<key>StartInterval</key>
+	<integer>300</integer>
+</dict>
+</plist>

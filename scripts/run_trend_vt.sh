@@ -12,9 +12,14 @@ MODE="${TREND_MODE:-testnet}"
 # 자본에서 뺀다. 실전은 전용 서브계정이므로 이 둘이 비어 있어야 한다.
 RSV="${TREND_RESERVED:-}"
 RSVE="${TREND_RESERVE_EQUITY:-0}"
+EXTRA=()
+[[ "${TREND_MAINTENANCE:-0}" == "1" ]] && EXTRA+=(--maintenance)
 {
   echo "===== $(date '+%F %T %Z') 시작 (mode=$MODE, 제외=$RSV/$RSVE) ====="
   ./.venv/bin/python live/trend_bot.py --mode "$MODE" --once \
-      --reserved "$RSV" --reserve-equity "$RSVE" 2>&1
-  echo "===== $(date '+%F %T %Z') 종료 code=$? ====="
+      --reserved "$RSV" --reserve-equity "$RSVE" "${EXTRA[@]}" 2>&1
+  bot_rc=$?
+  echo "===== $(date '+%F %T %Z') 종료 code=$bot_rc ====="
 } >> "$STATE/logs/cron.log"
+
+exit "$bot_rc"

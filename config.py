@@ -58,7 +58,8 @@ def make_exchange(market="futures", testnet=False, use_pro=True, need_keys=True)
 
     cfg = {
         "enableRateLimit": True,
-        "options": {"adjustForTimeDifference": True, "fetchCurrencies": False},
+        "timeout": 15000,
+        "options": {"adjustForTimeDifference": True, "fetchCurrencies": False, "recvWindow": 10000},
     }
     if need_keys:
         k, s = _KEYS[(market, testnet)]
@@ -75,7 +76,48 @@ def make_exchange(market="futures", testnet=False, use_pro=True, need_keys=True)
     if testnet:
         _use_testnet(ex, market)
     logging.info(f"[{'DEMO(테스트넷)' if testnet else 'PRODUCTION'}] {market}")
+    if use_pro:
+        resilient_reads(ex)
     return ex
+
+
+def resilient_reads(ex):
+    """읽기만 재시도한다. 주문 타임아웃은 중복 체결 위험 때문에 재전송하지 않는다."""
+    import asyncio
+    import ccxt
+    import time
+    original = ex.request
+    sync_at = 0.0
+    syncing = False
+
+    async def request(path, api="public", method="GET", params=None, headers=None, body=None, config=None):
+        nonlocal sync_at, syncing
+        if "private" in str(api).lower() and not syncing and time.monotonic() - sync_at > 60:
+            syncing = True
+            try:
+                await ex.load_time_difference()
+                sync_at = time.monotonic()
+            finally:
+                syncing = False
+        for attempt in range(3):
+            try:
+                return await original(path, api, method, params or {}, headers, body, config or {})
+            except ccxt.InvalidNonce:
+                if method != "GET" or attempt == 2 or syncing:
+                    raise
+                syncing = True
+                try:
+                    await ex.load_time_difference()
+                    sync_at = time.monotonic()
+                finally:
+                    syncing = False
+                logging.warning("거래소 시간 재동기화 후 읽기 재시도")
+            except (ccxt.NetworkError, ccxt.ExchangeNotAvailable):
+                if method != "GET" or attempt == 2:
+                    raise
+                logging.warning("거래소 읽기 실패 — 재시도 %s/2", attempt + 1)
+                await asyncio.sleep(2 ** attempt)
+    ex.request = request
 
 
 def _use_testnet(ex, market):
@@ -138,3 +180,15 @@ def _legacy():
 
 
 exchange = _legacy()
+
+
+def acquire_run_lock(path):
+    """프로세스 종료 시 OS가 해제하는 비차단 잠금."""
+    import fcntl
+    handle = open(path, "a", encoding="utf-8")
+    try:
+        fcntl.flock(handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except BlockingIOError:
+        handle.close()
+        return None
+    return handle

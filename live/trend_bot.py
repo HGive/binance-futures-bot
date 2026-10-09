@@ -149,10 +149,11 @@ class TrendBot:
         self.bars = {}
         self.skipped = []
 
-    async def setup(self):
+    async def setup(self, maintenance=False):
         # 시세: 실서버 공개 API (키 없음). 주문: 모드별 계정.
         self.pub = config.make_exchange("futures", testnet=False, use_pro=True, need_keys=False)
-        await self.pub.load_markets()
+        if not maintenance:
+            await self.pub.load_markets()
         if not self.dry:
             self.ex = config.make_exchange("futures", testnet=(self.mode == "testnet"), use_pro=True)
             await self.ex.load_markets()
@@ -171,13 +172,36 @@ class TrendBot:
             dual = await self.ex.fapiPrivateGetPositionSideDual()
             if str(dual.get("dualSidePosition")).lower() == "true":
                 raise RuntimeError("헤지 모드 계정이다. 이 봇은 단방향(One-way) 모드 전용 — 바이낸스 설정에서 바꿔라.")
-            for sym in S.SYMBOLS:
+            for sym in (() if maintenance else S.SYMBOLS):
                 for call in (lambda: self.ex.set_margin_mode("isolated", sym),
                              lambda: self.ex.set_leverage(S.LEVERAGE, sym)):
                     try:
                         await call()
                     except Exception as e:     # 이미 설정돼 있으면 -4046 등으로 거절된다
                         logging.info(f"[{sym}] 설정 건너뜀: {type(e).__name__}: {str(e)[:80]}")
+
+    async def maintenance(self):
+        """마지막 판단의 손절만 복구한다. 새 시세·진입·리밸런싱은 없다."""
+        _, positions = await self.account({})
+        opened = await self.ex.fapiPrivateGetOpenAlgoOrders({})
+        rows = opened if isinstance(opened, list) else opened.get("orders", [])
+        with open(self.journal, encoding="utf-8") as f:
+            last = json.loads(list(f)[-1])
+        for sym in S.SYMBOLS:
+            qty = positions.get(sym, 0.0)
+            if not qty:
+                await self.cancel_algos(sym)
+                continue
+            mid = self.ex.market(sym)["id"]
+            side = "SELL" if qty > 0 else "BUY"
+            protected = any(o.get("symbol") == mid and o.get("orderType") == "STOP_MARKET"
+                            and o.get("side") == side
+                            and str(o.get("reduceOnly")).lower() == "true"
+                            and float(o.get("quantity") or 0) >= abs(qty) for o in rows)
+            if not protected:
+                if not await self.refresh_stop(sym, qty, last["orders"][sym]):
+                    raise RuntimeError(f"[{sym}] 보호 주문 복구 실패로 청산")
+        logging.info("TREND 안전 점검 완료 — 신규 매매 없음")
 
     def rebase_peak(self):
         """자본 기준(--reserve-equity)이 바뀌면 킬스위치 고점도 같이 옮긴다.
@@ -461,6 +485,7 @@ async def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--mode", choices=["paper", "testnet", "live"], default="paper")
     ap.add_argument("--once", action="store_true")
+    ap.add_argument("--maintenance", action="store_true")
     ap.add_argument("--loop", action="store_true")
     ap.add_argument("--paper-equity", type=float, default=10_000.0)
     ap.add_argument("--reserved", default=os.environ.get("TREND_RESERVED", ""),
@@ -478,6 +503,10 @@ async def main():
     if a.mode == "live" and not a.i_know:
         logging.error("실전은 --i-know 가 필요하다 (STRATEGY_RULES 6: 테스트넷 1주 → 소액 2주 뒤에).")
         return
+    lock = config.acquire_run_lock(os.path.join(LOG_DIR, f"trend_vt_{a.mode}.json.lock"))
+    if lock is None:
+        logging.info("다른 실행이 점검 중 — 중복 실행 건너뜀")
+        return
     bot = TrendBot(a.mode, a.paper_equity, parse_symbols(a.reserved), a.reserve_equity)
     if bot.reserved:
         logging.info(f"계정 공유 | 남의 시드 {a.reserve_equity:.0f} 제외 | "
@@ -486,15 +515,19 @@ async def main():
         bot.st.update(halted=False, peak=None)
         bot.save()
         logging.info("킬스위치 해제, 고점 초기화")
+        lock.close()
         return
-    await bot.setup()
     try:
-        if a.loop:
+        await bot.setup(maintenance=a.maintenance)
+        if a.maintenance:
+            await bot.maintenance()
+        elif a.loop:
             await bot.loop()
         else:
             await bot.run_once()
     finally:
         await bot.close_all()
+        lock.close()
 
 
 if __name__ == "__main__":

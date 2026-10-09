@@ -1,0 +1,36 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>EnvironmentVariables</key>
+	<dict>
+		<key>SWING_ADD_TTL_HOURS</key>
+		<string>24</string>
+		<key>SWING_CAPITAL</key>
+		<string>1000</string>
+		<key>SWING_MAINTENANCE</key>
+		<string>1</string>
+		<key>SWING_MODE</key>
+		<string>testnet</string>
+		<key>SWING_PAPER_EQUITY</key>
+		<string>1000</string>
+		<key>SWING_RESERVED</key>
+		<string>BTC/USDT:USDT,ETH/USDT:USDT</string>
+	</dict>
+	<key>Label</key>
+	<string>com.algorijun.swingdca.safety</string>
+	<key>ProgramArguments</key>
+	<array>
+		<string>/bin/bash</string>
+		<string>/Users/gimhyeongjun/Library/Application Support/swingdca/run.sh</string>
+	</array>
+	<key>RunAtLoad</key>
+	<false/>
+	<key>StandardErrorPath</key>
+	<string>/Users/gimhyeongjun/Library/Application Support/swingdca/launchd.log</string>
+	<key>StandardOutPath</key>
+	<string>/Users/gimhyeongjun/Library/Application Support/swingdca/launchd.log</string>
+	<key>StartInterval</key>
+	<integer>300</integer>
+</dict>
+</plist>

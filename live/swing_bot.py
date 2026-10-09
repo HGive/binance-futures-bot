@@ -23,8 +23,8 @@ SWING_DCA 실행 봇 — 코인 스윙 물타기, 하루 한 번 + 중간 점검
         `--reserved`  다른 봇 몫인 종목. 후보에서 빼고, 그 포지션은 건드리지 않는다.
         이 둘이 없으면 계좌 전체를 자기 것으로 보고 남의 포지션에 주문을 건다.
 
-기대치는 strategies/swing_dca.py 머리말 참고. 요약: 연 +24%, MDD -62%,
-승률 97%. **BTC·ETH 그냥 보유(연 +33%)를 이기지 못한다.** 알고 돌린다.
+현재 판정: 장기간 백테스트 손실, 실전 금지. 테스트넷의 단기 수익은 전략 검증이 아니다.
+세부 판정은 ../binance-futures-bot-v2/STATUS.md 를 따른다.
 """
 import argparse
 import asyncio
@@ -54,11 +54,21 @@ P = S.LIVE
 
 # 계정을 나눠 쓸 때 자기 실현손익으로 인정하는 수입 항목.
 INCOME_KINDS = ("REALIZED_PNL", "COMMISSION", "FUNDING_FEE")
+KILL_LIMIT = min(S.KILL_DD, 0.20)
 
 
 def parse_symbols(text):
     """쉼표로 나열한 심볼 목록. 빈 문자열은 빈 집합."""
     return {s.strip() for s in (text or "").split(",") if s.strip()}
+
+
+def capped_stop(avg, qty, budget, add_price=0.0, add_qty=0.0):
+    """각 칸 손실 예산은 자본 20%/칸수. 5%는 비용·반올림 여유로 남긴다."""
+    loss_budget = budget * KILL_LIMIT * 0.95
+    stop = max(S.stop_price(avg, P), avg - loss_budget / qty)
+    if add_qty > 0:
+        stop = max(stop, (avg * qty + add_price * add_qty - loss_budget) / (qty + add_qty))
+    return stop
 
 
 def precise_amount(ex, sym, amt):
@@ -90,18 +100,29 @@ class SwingBot:
         if os.path.exists(self.state_path):
             with open(self.state_path, encoding="utf-8") as f:
                 self.st.update(json.load(f))
+        self.add_ttl_ms = int(float(os.environ.get("SWING_ADD_TTL_HOURS", "24")) * 3600000)
+        if self.add_ttl_ms <= 660000:
+            raise ValueError("추가 매수 만료는 11분보다 길어야 한다")
         self.pub = None
         self.ex = None
 
     # ---------------------------------------------------------------- 연결
-    async def connect(self):
+    async def connect(self, maintenance=False):
         os.makedirs(LOG_DIR, exist_ok=True)
         self.pub = config.make_exchange("futures", testnet=False, use_pro=True, need_keys=False)
-        await self.pub.load_markets()
         if not self.dry:
             self.ex = config.make_exchange("futures", testnet=(self.mode == "testnet"), use_pro=True)
+            # 과거 보유 종목별 반복 조회 대신 전체 주문을 한 번 조회한다.
+            self.ex.options["warnOnFetchOpenOrdersWithoutSymbol"] = False
             await self.ex.load_markets()
-            others = self.foreign_positions(await self.ex.fetch_positions())
+            initial = await self.ex.fetch_positions()
+            ever = set(self.st.get("owned_ever", [])) - self.reserved
+            for position in initial:
+                if (position["symbol"] in ever and position.get("side") == "long"
+                        and float(position.get("contracts") or 0)):
+                    self.remember(position["symbol"])
+            self.save()
+            others = self.foreign_positions(initial)
             if others:
                 raise RuntimeError(
                     f"이 전략이 열지 않은 포지션이 있다: {others[:5]}. "
@@ -119,6 +140,10 @@ class SwingBot:
             dual = await self.ex.fapiPrivateGetPositionSideDual()
             if str(dual.get("dualSidePosition")).lower() == "true":
                 raise RuntimeError("헤지 모드 계정이다. 단방향(One-way) 전용이다.")
+
+        await self.cleanup_closed(await self.positions())
+        if not maintenance:
+            await self.pub.load_markets()
 
     def foreign_positions(self, positions):
         """이 전략이 연 적이 없는 포지션 목록.
@@ -288,7 +313,59 @@ class SwingBot:
         rows = self.algo_rows(await self.ex.fapiPrivateGetOpenAlgoOrders({}))
         return [o for o in rows if o.get("symbol") == mid]
 
-    async def ensure_orders(self, sym, pos, budget):
+    async def cancel_symbol_orders(self, sym, require_flat=False):
+        for order in await self.ex.fetch_open_orders(sym):
+            try:
+                await self.ex.cancel_order(order["id"], sym)
+            except ccxt.OrderNotFound:
+                pass  # 취소와 체결이 경합했으면 아래에서 포지션을 다시 확인한다.
+        if require_flat:
+            for p in await self.ex.fetch_positions([sym]):
+                if float(p.get("contracts") or 0):
+                    self.remember(sym)
+                    self.save()
+                    raise RuntimeError(f"[{sym}] 주문 취소 중 체결 — 손절 유지, 소유 기록 복구")
+        for order in await self.open_algos(sym):
+            try:
+                await self.ex.fapiPrivateDeleteAlgoOrder({"algoId": str(order["algoId"])})
+            except ccxt.OrderNotFound:
+                pass
+
+    async def cleanup_closed(self, pos):
+        if self.dry:
+            candidates = set(self.st.get("owned", []))
+        else:
+            known = set(self.st.get("owned_ever", [])) | set(self.st.get("owned", []))
+            orders = await self.ex.fetch_open_orders()
+            algos = self.algo_rows(await self.ex.fapiPrivateGetOpenAlgoOrders({}))
+            mids = {o.get("symbol") for o in algos}
+            pending = {o.get("symbol") for o in orders}
+            candidates = set(self.st.get("owned", [])) | {
+                sym for sym in known - self.reserved
+                if sym in pending or self.ex.market(sym)["id"] in mids}
+        today = datetime.now(timezone.utc).date()
+        for sym in sorted(candidates - set(pos) - self.reserved):
+            if not self.dry:
+                await self.cancel_symbol_orders(sym, require_flat=True)
+            if sym in self.st.get("owned", []):
+                self.forget(sym)
+                self.st.setdefault("cooldown", {})[sym] = (
+                    today + timedelta(days=P.cooldown_days)).isoformat()
+                self.st.setdefault("add_deadlines", {}).pop(sym, None)
+                logging.info(f"[{sym}] 청산 확인 — 잔여 주문 정리, 재진입 대기")
+        self.save()
+
+    def add_deadline(self, sym, existing=()):
+        deadlines = self.st.setdefault("add_deadlines", {})
+        if sym not in deadlines:
+            now = self.ex.milliseconds()
+            times = [int(o.get("timestamp") or o.get("info", {}).get("time") or now)
+                     for o in existing if o.get("side") == "buy"]
+            deadlines[sym] = min(times, default=now) + self.add_ttl_ms
+            self.save()
+        return int(deadlines[sym])
+
+    async def ensure_orders(self, sym, pos, budget, allow_add=True):
         """이 종목에 필요한 주문(물타기·익절·손절)이 정확히 걸려 있게 만든다."""
         avg, qty = pos["avg"], pos["qty"]
         added = S.has_added(S.cost_basis(qty, avg), budget, P)
@@ -296,7 +373,7 @@ class SwingBot:
             "tp": (round(S.tp_price(avg, P), 10), "sell", qty, "limit"),
             "stop": (round(S.stop_price(avg, P), 10), "sell", qty, "stop"),
         }
-        if not added:
+        if not added and allow_add:
             # 남은 예산만큼만 더 넣는다. 부분체결이 나도 스스로 맞춰지고
             # 칸 예산을 넘지 않으므로 레버리지가 걸리지 않는다.
             add_notional = S.remaining_add(qty, avg, budget)
@@ -310,27 +387,47 @@ class SwingBot:
 
         existing = await self.ex.fetch_open_orders(sym)
         algo_list = await self.open_algos(sym)
+        deadline = self.add_deadline(sym, existing)
+        if deadline <= self.ex.milliseconds() + 660000:
+            want.pop("add", None)
+
+        if self.mode == "testnet":
+            add = want.get("add", (0.0, "buy", 0.0, "limit"))
+            want["stop"] = (capped_stop(avg, qty, budget, add[0], add[2]), "sell", qty, "stop")
 
         def near(a, b):
             return abs(a - b) / max(b, 1e-12) < 0.002
 
         have_tp = any(o["side"] == "sell" and o["type"] == "limit"
+                      and o.get("reduceOnly") and near(float(o["remaining"]), qty)
                       and near(float(o["price"]), want["tp"][0]) for o in existing)
         have_add = "add" not in want or any(
             o["side"] == "buy" and o["type"] == "limit"
+            and o.get("timeInForce") == "GTD"
+            and int(o.get("info", {}).get("goodTillDate") or 0) == deadline // 1000 * 1000
+            and near(float(o["remaining"]), precise_amount(self.ex, sym, want["add"][2]))
             and near(float(o["price"]), want["add"][0]) for o in existing)
-        have_stop = any(near(self.algo_stop_price(a), want["stop"][0]) for a in algo_list)
+        have_stop = any(a.get("orderType") == "STOP_MARKET" and a.get("side") == "SELL"
+                        and str(a.get("reduceOnly")).lower() == "true"
+                        and float(a.get("quantity") or 0) >= qty
+                        and near(self.algo_stop_price(a), want["stop"][0]) for a in algo_list)
 
-        # 안 맞는 주문은 지운다
+        # 수량·가격·만료까지 맞는 주문만 남긴다. 취소 실패면 추가 주문을 내지 않는다.
+        kept = set()
         for o in existing:
-            keep = ((o["side"] == "sell" and have_tp and near(float(o["price"]), want["tp"][0]))
-                    or (o["side"] == "buy" and "add" in want and have_add
-                        and near(float(o["price"]), want["add"][0])))
-            if not keep:
-                try:
-                    await self.ex.cancel_order(o["id"], sym)
-                except Exception as e:  # noqa: BLE001
-                    logging.warning(f"[{sym}] 주문 취소 실패 {o['id']}: {e}")
+            kind = "tp" if o["side"] == "sell" else "add"
+            valid = ((kind == "tp" and have_tp and o.get("reduceOnly")
+                      and near(float(o["remaining"]), qty)
+                      and near(float(o["price"]), want["tp"][0]))
+                     or (kind == "add" and "add" in want and have_add
+                         and o.get("timeInForce") == "GTD"
+                         and int(o.get("info", {}).get("goodTillDate") or 0) == deadline // 1000 * 1000
+                         and near(float(o["remaining"]), precise_amount(self.ex, sym, want["add"][2]))
+                         and near(float(o["price"]), want["add"][0])))
+            if valid and kind not in kept:
+                kept.add(kind)
+            else:
+                await self.ex.cancel_order(o["id"], sym)
 
         if not have_stop:
             # 새 손절을 **먼저** 걸고, 그 다음 나머지를 지운다.
@@ -349,12 +446,13 @@ class SwingBot:
                             try:
                                 await self.ex.fapiPrivateDeleteAlgoOrder(
                                     {"algoId": str(a["algoId"])})
-                            except Exception:  # noqa: BLE001
-                                pass
+                            except Exception as e:  # noqa: BLE001
+                                logging.error(f"[{sym}] 이전 손절 취소 실패: {e}")
                 except Exception as e:  # noqa: BLE001
                     logging.error(f"[{sym}] 손절 실패 — 포지션을 정리한다: {e}")
                     await self.market_close(sym, qty)
-                    return
+                    await self.cleanup_closed(await self.positions())
+                    raise RuntimeError(f"[{sym}] 손절 설정 실패로 청산됨")
 
         if not have_tp:
             amt = precise_amount(self.ex, sym, qty)
@@ -365,7 +463,7 @@ class SwingBot:
                         self.ex.price_to_precision(sym, want["tp"][0]), {"reduceOnly": True})
                     logging.info(f"[{sym}] 익절 지정가 {want['tp'][0]:.6g}")
                 except Exception as e:  # noqa: BLE001
-                    logging.warning(f"[{sym}] 익절 주문 실패: {e}")
+                    raise RuntimeError(f"[{sym}] 익절 주문 실패") from e
 
         if "add" in want and not have_add:
             amt = precise_amount(self.ex, sym, want["add"][2])
@@ -373,15 +471,24 @@ class SwingBot:
                 try:
                     await self.ex.create_order(
                         sym, "limit", "buy", amt,
-                        self.ex.price_to_precision(sym, want["add"][0]))
+                        self.ex.price_to_precision(sym, want["add"][0]),
+                        {"timeInForce": "GTD", "goodTillDate": deadline // 1000 * 1000})
                     logging.info(f"[{sym}] 물타기 지정가 {want['add'][0]:.6g} × {amt}")
                 except Exception as e:  # noqa: BLE001
-                    logging.warning(f"[{sym}] 물타기 주문 실패: {e}")
+                    raise RuntimeError(f"[{sym}] 물타기 주문 실패") from e
 
     def enough_notional(self, sym, amt, px):
         m = (self.ex or self.pub).market(sym)
         lim = (m.get("limits") or {}).get("cost") or {}
         return amt * px >= float(lim.get("min") or 5.0)
+
+    async def cancel_buys(self):
+        if self.dry:
+            return
+        owned = set(self.st.get("owned_ever", [])) - self.reserved
+        for o in await self.ex.fetch_open_orders():
+            if o["symbol"] in owned and o["side"] == "buy":
+                await self.ex.cancel_order(o["id"], o["symbol"])
 
     async def market_close(self, sym, qty):
         amt = precise_amount(self.ex, sym, qty)
@@ -418,34 +525,37 @@ class SwingBot:
             # 주문을 내기 **전에** 기록한다. 체결 직후 봇이 죽어도 다음 실행이
             # 자기 포지션으로 알아본다. 안 열렸으면 아래 정리 단계가 지운다.
             self.remember(sym)
+            self.st.setdefault("add_deadlines", {})[sym] = self.ex.milliseconds() + self.add_ttl_ms
             self.save()
             await self.ex.create_order(sym, "market", "buy", amt)
             logging.info(f"[{sym}] 진입 {amt} @ ~{px:.6g}")
             return True
         except Exception as e:  # noqa: BLE001
+            if "-4411" in str(e):
+                self.st.setdefault("blocked", {})[sym] = "거래소 계약 동의 필요 (-4411)"
+                self.save()
             logging.warning(f"[{sym}] 진입 실패: {e}")
             return False
 
     # ---------------------------------------------------------------- 본체
-    async def run_once(self):
+    async def run_once(self, maintenance=False):
+        await self.cleanup_closed(await self.positions())
         eq = await self.equity()
         peak = max(self.st.get("peak") or eq, eq)
         self.st["peak"] = peak
         dd = eq / peak - 1
         if self.st.get("halted"):
+            await self.cancel_buys()
             logging.warning(f"정지 상태 (자본 {eq:.2f}). --reset-kill 로만 푼다.")
             return
-        if dd <= -S.KILL_DD:
+        if dd <= -KILL_LIMIT:
             logging.error(f"킬스위치: 고점 대비 {dd:.1%} — 전부 정리하고 멈춘다")
             pos = await self.positions()
+            await self.cancel_buys()
             if not self.dry:
                 for sym, p in pos.items():
-                    for o in await self.ex.fetch_open_orders(sym):
-                        try:
-                            await self.ex.cancel_order(o["id"], sym)
-                        except Exception:  # noqa: BLE001
-                            pass
                     await self.market_close(sym, p["qty"])
+                    await self.cancel_symbol_orders(sym)
             self.st["halted"] = True
             self.save()
             return
@@ -454,30 +564,23 @@ class SwingBot:
         pos = await self.positions()
         budget = eq / P.slots
 
-        # 청산된 종목은 기록에서 지우고 재진입 대기를 건다
-        today = datetime.now(timezone.utc).date()
-        for sym in list(self.st.get("owned", [])):
-            if sym not in pos:
-                self.forget(sym)
-                self.st.setdefault("cooldown", {})[sym] = (
-                    today + timedelta(days=P.cooldown_days)).isoformat()
-                logging.info(f"[{sym}] 청산 확인 — 재진입 {P.cooldown_days}일 대기")
-        self.save()
-
+        failures = []
         # 1) 보유분 주문 정리
         for sym, p in pos.items():
             try:
-                await self.ensure_orders(sym, p, budget)
+                await self.ensure_orders(sym, p, budget, allow_add=gate.get("allow_new", True))
             except Exception as e:  # noqa: BLE001
+                failures.append(sym)
                 logging.error(f"[{sym}] 주문 정리 실패: {e}")
 
         # 2) 빈 칸 채우기
         free = P.slots - len(pos)
-        if free > 0 and gate.get("allow_new", True):
+        if free > 0 and gate.get("allow_new", True) and not maintenance and not failures:
             ready, bar = await self.universe()
             cd = self.st.get("cooldown", {})
             today = datetime.now(timezone.utc).date().isoformat()
-            ready = [s for s in ready if s not in pos and cd.get(s, "") < today]
+            ready = [s for s in ready if s not in pos and s not in self.st.get("blocked", {})
+                     and s in (self.ex or self.pub).markets and cd.get(s, "") < today]
             logging.info(f"빈 칸 {free}개 | 자격+신호 종목 {len(ready)}개 (일봉 {bar})")
             for sym in ready[:free]:
                 if await self.open_new(sym, budget):
@@ -486,9 +589,11 @@ class SwingBot:
                         try:
                             await self.ensure_orders(sym, p2, budget)
                         except Exception as e:  # noqa: BLE001
+                            failures.append(sym)
                             logging.error(f"[{sym}] 신규 주문 설정 실패: {e}")
 
         pos = await self.positions()
+        await self.cleanup_closed(pos)
         eq2 = await self.equity()
         logging.info(f"완료 | 자본 {eq2:.2f} {S.QUOTE} (고점 대비 {eq2 / peak - 1:+.1%}) "
                      f"| 보유 {len(pos)}/{P.slots}칸 {sorted(pos)}")
@@ -498,17 +603,22 @@ class SwingBot:
                                 "positions": {k: v["qty"] for k, v in pos.items()}},
                                ensure_ascii=False) + "\n")
         self.save()
+        if failures:
+            raise RuntimeError(f"주문 점검 실패: {failures}")
 
     def save(self):
         os.makedirs(LOG_DIR, exist_ok=True)
-        with open(self.state_path, "w", encoding="utf-8") as f:
+        temp = self.state_path + ".tmp"
+        with open(temp, "w", encoding="utf-8") as f:
             json.dump(self.st, f, ensure_ascii=False, indent=1)
+        os.replace(temp, self.state_path)
 
 
 async def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--mode", choices=["paper", "testnet", "live"], default="paper")
     ap.add_argument("--once", action="store_true")
+    ap.add_argument("--maintenance", action="store_true", help="신규 진입 없이 잔여 주문·보호 수량만 점검")
     ap.add_argument("--paper-equity", type=float, default=1_000.0)
     ap.add_argument("--capital", type=float, default=float(os.environ.get("SWING_CAPITAL") or 0),
                     help="자기 시드(USDT). 주면 계좌 잔고 대신 이 금액을 자본으로 쓴다. "
@@ -527,6 +637,10 @@ async def main():
     if a.mode == "live" and not a.i_know:
         print("실전은 --i-know 가 필요하다. 규칙 6: 데모 1주 → 소액 실전 2주.")
         return 1
+    lock = config.acquire_run_lock(os.path.join(LOG_DIR, f"swing_dca_{a.mode}.json.lock"))
+    if lock is None:
+        logging.info("다른 실행이 점검 중 — 중복 실행 건너뜀")
+        return 0
     bot = SwingBot(a.mode, a.paper_equity, a.capital, parse_symbols(a.reserved))
     if bot.reserved:
         logging.info(f"계정 공유 | 시드 {a.capital:.0f} {S.QUOTE} | 제외 {sorted(bot.reserved)}")
@@ -536,10 +650,11 @@ async def main():
         bot.save()
         logging.info("킬스위치 해제")
     try:
-        await bot.connect()
-        await bot.run_once()
+        await bot.connect(maintenance=a.maintenance)
+        await bot.run_once(maintenance=a.maintenance)
     finally:
         await bot.close()
+        lock.close()
     return 0
 
 

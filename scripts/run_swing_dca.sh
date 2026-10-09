@@ -15,9 +15,14 @@ EQ="${SWING_PAPER_EQUITY:-1000}"
 #   RESERVED TREND_VT 가 쓰는 종목. 후보에서 빼고 그 포지션은 건드리지 않는다.
 CAP="${SWING_CAPITAL:-0}"
 RSV="${SWING_RESERVED:-}"
+EXTRA=()
+[[ "${SWING_MAINTENANCE:-0}" == "1" ]] && EXTRA+=(--maintenance)
 {
   echo "===== $(date '+%F %T %Z') 시작 (mode=$MODE, 시드=$CAP, 제외=$RSV) ====="
   ./.venv/bin/python live/swing_bot.py --mode "$MODE" --once \
-      --paper-equity "$EQ" --capital "$CAP" --reserved "$RSV" 2>&1
-  echo "===== $(date '+%F %T %Z') 종료 code=$? ====="
+      --paper-equity "$EQ" --capital "$CAP" --reserved "$RSV" "${EXTRA[@]}" 2>&1
+  bot_rc=$?
+  echo "===== $(date '+%F %T %Z') 종료 code=$bot_rc ====="
 } >> "$STATE/logs/cron.log"
+
+exit "$bot_rc"
